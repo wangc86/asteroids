@@ -1,12 +1,18 @@
-{:source-paths ["src"]
+{:source-paths ["src" "test"]
 
  :dependencies []
 
  :dev-http {8080 "public"}
 
  :builds
- {:app {:target     :browser
-        :output-dir "public/js"
-        :asset-path "js"
-        :modules    {:main {:init-fn asteroids.core/init!}}
-        :devtools   {:after-load asteroids.core/after-load!}}}}
+ {:app  {:target     :browser
+         :output-dir "public/js"
+         :asset-path "js"
+         :modules    {:main {:init-fn asteroids.core/init!}}
+         :devtools   {:after-load asteroids.core/after-load!}}
+
+  ;; 純邏輯的單元測試，在 node 上跑，不需要瀏覽器：npm test
+  :test {:target    :node-test
+         :output-to "out/node-tests.js"
+         :ns-regexp "-test$"
+         :autorun   true}}}

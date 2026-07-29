@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "dev": "shadow-cljs watch app",
-    "release": "shadow-cljs release app"
+    "release": "shadow-cljs release app",
+    "test": "shadow-cljs compile test"
   },
   "devDependencies": {
     "shadow-cljs": "^2.28.20"

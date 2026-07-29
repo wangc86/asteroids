@@ -46,26 +46,45 @@
 ```bash
 npm install                    # 安裝依賴
 npx shadow-cljs watch app      # 開發模式 + hot reload → http://localhost:8080
+npm test                       # 在 node 上跑單元測試（shadow-cljs compile test）
 npx shadow-cljs release app    # 產出正式版到 public/js
 ```
 
 - 開發模式的 shadow-cljs 主控台在 http://localhost:9630
-- 產出物 `public/js/` 不進版控；部署時（里程碑 7）才 release 後另行處理
+- 產出物 `public/js/`、`out/` 不進版控；部署時（里程碑 7）才 release 後另行處理
+- **改到 `shadow-cljs.edn` 的 `:source-paths` 後要重啟 server**（`npx shadow-cljs stop`），
+  常駐的 server 不會重讀這個設定，症狀是測試明明寫了卻顯示 `Ran 0 tests`
 
 ## 專案結構
 
 ```
-public/index.html        頁面外殼與 canvas CSS（4:3 滿版）
-src/asteroids/core.cljs  遊戲全部程式碼
-shadow-cljs.edn          建置設定（:dev-http 8080 → public）
+public/index.html             頁面外殼與 canvas CSS（4:3 滿版）
+src/asteroids/game.cljs       純邏輯：常數、亂數、生成、tick、碰撞分裂
+src/asteroids/core.cljs       side effect：draw!、鍵盤、canvas、rAF 迴圈
+test/asteroids/game_test.cljs game 的單元測試
+shadow-cljs.edn               建置設定（:app → public、:test → node）
 ```
 
-`core.cljs` 的分層：`initial-state` / `tick`（純函數，可測）→ `draw!`（唯一 side effect）
-→ `frame!`（rAF 迴圈）。遊戲座標固定為 1024×768 邏輯單位，`ensure-size!` 每幀
-把 canvas 緩衝區對齊實際顯示尺寸並縮放 context，所以視窗大小與 devicePixelRatio
-都不影響遊戲數值。
+**分層規則：`game` 不准碰任何瀏覽器 API**——沒有 `document`、沒有 canvas、沒有 atom，
+只有純函數。所以它能在 node 上直接測試。依賴方向是單向的 `core → game`，
+Clojure 不允許循環 require，新增功能時請維持這個方向。
 
-`state` / `started?` 用 `defonce`，hot reload 時遊戲狀態與迴圈都不會重來。
+- `game/tick`：`(tick state dt inputs)`，inputs 是動作關鍵字的 set
+- `core/draw!`：唯一的繪圖 side effect
+- `core/frame!`：rAF 迴圈，把 `@keys-down` 餵給 `tick`，再把結果交給 `draw!`
+- 遊戲座標固定為 1024×768 邏輯單位，`core/ensure-size!` 每幀把 canvas 緩衝區
+  對齊實際顯示尺寸並縮放 context，視窗大小與 devicePixelRatio 都不影響遊戲數值
+- `core` 的 `state` / `started?` 用 `defonce`，hot reload 時遊戲狀態與迴圈都不會重來
+
+之後音效（里程碑 6）獨立成 `asteroids.sound`，繪圖若超過 150 行再拆 `asteroids.render`。
+
+## 測試
+
+`npm test` 跑 `test/asteroids/game_test.cljs`，node 上執行，不需要瀏覽器。
+
+寫測試靠 `(initial-state seed)` 的可重現性：固定 seed + 固定輸入序列 → 固定結果。
+測試裡的 `step` / `run` 以 60 fps 推進固定秒數，所以「按住右轉一秒剛好 200 度」
+這種手感規格可以直接寫成斷言。**改動 `game` 的行為時請一併更新或新增測試。**
 
 ## 手感參數（里程碑 2 使用者試玩定案，2026-07-29）
 
