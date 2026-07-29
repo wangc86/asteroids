@@ -41,6 +41,22 @@
 (def ^:const bullet-life 1.15)   ; 秒，約可飛過畫面七成寬
 (def ^:const max-bullets 4)
 
+;; 遊戲規則。分數與加命門檻照原版。
+(def score-for {:large 20, :medium 50, :small 100})
+(def ^:const start-lives 3)
+(def ^:const extra-life-every 10000)
+(def ^:const ship-radius 11)              ; 撞擊判定用的圓，比機身略小一點才不會覺得冤枉
+(def ^:const respawn-delay 2.0)           ; 秒，爆炸到重生之間的空白
+(def ^:const invuln-time 3.0)             ; 秒，出場後的無敵時間
+(def ^:const respawn-clear-radius 90)     ; 重生點周圍要淨空到這個半徑才會放人出來
+(def ^:const level-pause 1.5)             ; 秒，清空到下一波之間的停頓
+(def ^:const level-asteroid-step 2)       ; 每關多兩顆
+(def ^:const max-level-asteroids 11)      ; 原版的上限
+
+(defn asteroids-for-level [level]
+  (min max-level-asteroids
+       (+ level-1-asteroids (* level-asteroid-step (dec level)))))
+
 ;; --- 亂數 -------------------------------------------------------------------
 ;; 亂數狀態（seed）放在遊戲 state 裡跟著走，這樣連「分裂出新小行星」這種需要
 ;; 亂數的行為都能留在純函數裡，同一個 seed 必定跑出同一場遊戲，方便測試。
@@ -118,14 +134,22 @@
   "不給 seed 就用時間當種子；給 seed 則整場遊戲完全重現，測試用。"
   ([] (initial-state (bit-or (js/Date.now) 1)))   ; bit-or 1：截成 32 位元且保證非零
   ([seed]
-   (let [[asteroids seed] (spawn-wave seed level-1-asteroids)]
-     {:ship       (initial-ship)
-      :asteroids  asteroids
-      :bullets    []
+   (let [[asteroids seed] (spawn-wave seed (asteroids-for-level 1))]
+     {:ship            (initial-ship)
+      :asteroids       asteroids
+      :bullets         []
       ;; 射擊是按一次打一發，不是按著不放連射，所以要記上一幀有沒有按著
-      :fire-held? false
-      :seed       seed
-      :t          0.0})))
+      :fire-held?      false
+      :score           0
+      :lives           start-lives
+      :level           1
+      :next-extra-life extra-life-every
+      ;; :playing 正常遊玩／:dead 等待重生／:next-level 過關停頓／:game-over 等待重開
+      :phase           :playing
+      :timer           0.0        ; 目前階段的倒數，各階段共用這一個欄位
+      :invuln          invuln-time
+      :seed            seed
+      :t               0.0})))
 
 ;; --- 推進一幀 ---------------------------------------------------------------
 
@@ -176,6 +200,11 @@
          :x (wrap (+ x (* vx dt)) world-w)
          :y (wrap (+ y (* vy dt)) world-h)))
 
+(defn playing?
+  "只有 :playing 階段飛船才受控、才會被撞、才能開火。"
+  [state]
+  (= :playing (:phase state)))
+
 ;; --- 子彈 -------------------------------------------------------------------
 
 (defn- advance-bullets
@@ -201,14 +230,18 @@
              :vy   (* bullet-speed sin)
              :life bullet-life})))
 
+(defn- fire-edge?
+  "這幀按下、上一幀沒按——按住不放不會連射。
+   :fire-held? 在 tick 的最後才更新，所以同一幀裡開火與重開遊戲看到的是同一個邊緣。"
+  [state inputs]
+  (and (boolean (inputs :fire)) (not (:fire-held? state))))
+
 (defn- maybe-fire [state inputs]
-  (let [pressed? (boolean (inputs :fire))
-        ;; 只在「這幀按下、上一幀沒按」的瞬間發射
-        fire?    (and pressed?
-                      (not (:fire-held? state))
-                      (< (count (:bullets state)) max-bullets))]
-    (-> (if fire? (fire-bullet state) state)
-        (assoc :fire-held? pressed?))))
+  (if (and (playing? state)
+           (fire-edge? state inputs)
+           (< (count (:bullets state)) max-bullets))
+    (fire-bullet state)
+    state))
 
 ;; --- 碰撞與分裂 --------------------------------------------------------------
 
@@ -246,6 +279,16 @@
       [[c1 c2] seed])
     [[] seed]))
 
+(defn- award-extra-life
+  "每累積 extra-life-every 分加一命。單幀最多 4 發子彈、至多幾百分，
+   不可能一次跨過兩個門檻，所以判斷一次就夠。"
+  [state]
+  (if (>= (:score state) (:next-extra-life state))
+    (-> state
+        (update :lives inc)
+        (update :next-extra-life + extra-life-every))
+    state))
+
 (defn- resolve-hits [{:keys [asteroids bullets] :as state}]
   (let [[survivors-b hit]
         (reduce (fn [[bs hit] b]
@@ -261,20 +304,100 @@
                       (let [[cs seed] (split seed (nth asteroids i))]
                         [(into acc cs) seed]))
                     [[] (:seed state)]
-                    hit)]
+                    hit)
+            gained (reduce + 0 (map #(score-for (:size (nth asteroids %))) hit))]
+        (-> state
+            (assoc :bullets   survivors-b
+                   :asteroids (into (into [] (keep-indexed #(when-not (hit %1) %2)) asteroids)
+                                    children)
+                   :seed      seed)
+            (update :score + gained)
+            (award-extra-life))))))
+
+;; --- 命數、關卡、階段 --------------------------------------------------------
+
+(defn- within?
+  "兩點在環繞世界裡的距離小於 r？"
+  [x1 y1 x2 y2 r]
+  (let [dx (wrap-delta (- x2 x1) world-w)
+        dy (wrap-delta (- y2 y1) world-h)]
+    (< (+ (* dx dx) (* dy dy)) (* r r))))
+
+(defn- ship-hit? [ship asteroids]
+  (boolean
+   (some (fn [a]
+           (within? (:x ship) (:y ship) (:x a) (:y a)
+                    (+ ship-radius (asteroid-radius (:size a)))))
+         asteroids)))
+
+(defn- ship-collision
+  "撞上小行星就少一命。小行星不受影響——重生點淨空檢查會處理『原地又被撞死』。"
+  [state]
+  (if (and (playing? state)
+           (zero? (:invuln state))
+           (ship-hit? (:ship state) (:asteroids state)))
+    (let [lives (dec (:lives state))]
+      (assoc state
+             :lives lives
+             :phase (if (pos? lives) :dead :game-over)
+             :timer respawn-delay))
+    state))
+
+(defn- check-level-clear [state]
+  (if (and (playing? state) (empty? (:asteroids state)))
+    (assoc state :phase :next-level :timer level-pause)
+    state))
+
+(defn- respawn-clear?
+  "重生點周圍夠空曠了嗎？沒淨空就繼續等，避免一出場就撞死。"
+  [asteroids]
+  (let [cx (/ world-w 2)
+        cy (/ world-h 2)]
+    (not-any? (fn [a]
+                (within? cx cy (:x a) (:y a)
+                         (+ respawn-clear-radius (asteroid-radius (:size a)))))
+              asteroids)))
+
+(defn- advance-phase [state inputs]
+  (case (:phase state)
+    :dead
+    (if (and (zero? (:timer state)) (respawn-clear? (:asteroids state)))
+      (assoc state :ship (initial-ship) :invuln invuln-time :phase :playing)
+      state)
+
+    :next-level
+    (if (zero? (:timer state))
+      (let [level     (inc (:level state))
+            [as seed] (spawn-wave (:seed state) (asteroids-for-level level))]
         (assoc state
-               :bullets   survivors-b
-               :asteroids (into (into [] (keep-indexed #(when-not (hit %1) %2)) asteroids)
-                                children)
-               :seed      seed)))))
+               :level     level
+               :asteroids as
+               :seed      seed
+               :invuln    invuln-time
+               :phase     :playing))
+      state)
+
+    :game-over
+    (if (fire-edge? state inputs)
+      (initial-state (:seed state))
+      state)
+
+    state))
 
 (defn tick
   "推進一幀。inputs 是動作關鍵字的 set，例如 #{:left :thrust :fire}。"
   [state dt inputs]
   (-> state
       (update :t + dt)
-      (update :ship update-ship dt inputs)
+      (update :invuln #(max 0.0 (- % dt)))
+      (update :timer #(max 0.0 (- % dt)))
+      (cond-> (playing? state) (update :ship update-ship dt inputs))
       (update :asteroids (fn [as] (mapv #(drift % dt) as)))
       (update :bullets advance-bullets dt)
       (maybe-fire inputs)
-      (resolve-hits)))
+      (resolve-hits)
+      (ship-collision)
+      (check-level-clear)
+      (advance-phase inputs)
+      ;; 最後才記下按鍵狀態，前面所有邊緣偵測看到的才會是同一幀的判斷
+      (assoc :fire-held? (boolean (inputs :fire)))))

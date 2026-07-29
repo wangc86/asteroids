@@ -29,19 +29,25 @@
 (defn- sizes [state]
   (sort (map :size (:asteroids state))))
 
-(defn- no-asteroids [state]
-  (assoc state :asteroids []))
-
 (defn- still-asteroid
   "固定在原地不動的小行星，用來測碰撞。"
   [size x y]
   (let [[a _] (game/make-asteroid 42 size x y)]
     (assoc a :vx 0.0 :vy 0.0)))
 
-(defn- world-with [asteroids]
+(defn- world-with
+  "指定小行星、清空子彈、解除開場無敵的測試場地。"
+  [asteroids]
   (assoc (game/initial-state 777)
          :asteroids (vec asteroids)
-         :bullets   []))
+         :bullets   []
+         :invuln    0.0))
+
+(defn- open-space
+  "只留一顆遠在角落的小行星：飛船前方實質淨空，但場上還有東西所以不會觸發過關。
+   單獨測子彈時用這個——真的清空會進 :next-level，那時是不能開火的。"
+  [state]
+  (assoc state :asteroids [(still-asteroid :small 60 700)]))
 
 ;; --- 世界環繞 ---------------------------------------------------------------
 
@@ -150,7 +156,7 @@
 ;; --- 子彈生命週期 ------------------------------------------------------------
 
 (deftest firing-is-edge-triggered
-  (let [s      (no-asteroids (game/initial-state 1))
+  (let [s      (open-space (game/initial-state 1))
         held   (run s 1 #{:fire})
         tapped (-> s (step #{:fire}) (step no-input) (step #{:fire}))]
     (is (= 1 (count (:bullets held))) "按住不放只會發射一次")
@@ -158,12 +164,12 @@
 
 (deftest at-most-four-bullets-on-screen
   (let [s (reduce (fn [st _] (-> st (step #{:fire}) (step no-input)))
-                  (no-asteroids (game/initial-state 1))
+                  (open-space (game/initial-state 1))
                   (range 10))]
     (is (= game/max-bullets (count (:bullets s))))))
 
 (deftest bullet-leaves-the-nose-at-fixed-speed
-  (let [s (step (no-asteroids (game/initial-state 1)) #{:fire})
+  (let [s (step (open-space (game/initial-state 1)) #{:fire})
         b (first (:bullets s))]
     (is (close? (:x b) (/ game/world-w 2) 1e-6))
     (is (close? (:y b) (- (/ game/world-h 2) game/ship-nose) 1e-6)
@@ -173,7 +179,7 @@
         "射速固定，不加上飛船速度（原版怪癖）")))
 
 (deftest bullets-expire
-  (let [fired (step (no-asteroids (game/initial-state 1)) #{:fire})]
+  (let [fired (step (open-space (game/initial-state 1)) #{:fire})]
     (is (= 1 (count (:bullets (run fired 1.13 no-input)))) "壽命內還在")
     (is (= 0 (count (:bullets (run fired 1.2 no-input)))) "壽命到了就消失")))
 
@@ -222,6 +228,129 @@
               (run 0.3 no-input))]
     (is (= [:large] (sizes s)))
     (is (= 1 (count (:bullets s))))))
+
+;; --- 分數與命數 --------------------------------------------------------------
+
+(deftest destroying-asteroids-scores-by-size
+  (doseq [[size expected] [[:large (:large game/score-for)]
+                           [:medium (:medium game/score-for)]
+                           [:small (:small game/score-for)]]]
+    (testing (name size)
+      (let [s (-> (world-with [(still-asteroid size 512 184)])
+                  (step #{:fire})
+                  (run 0.4 no-input))]
+        (is (= expected (:score s)))))))
+
+(deftest score-starts-at-zero-with-three-lives
+  (let [s (game/initial-state 1)]
+    (is (= 0 (:score s)))
+    (is (= game/start-lives (:lives s)))
+    (is (= 1 (:level s)))
+    (is (= :playing (:phase s)))))
+
+(deftest extra-life-at-the-threshold
+  (let [s (-> (world-with [(still-asteroid :large 512 184)])
+              ;; 差 20 分就到門檻，打掉一顆大隕石剛好跨過
+              (assoc :score (- game/extra-life-every 20))
+              (step #{:fire})
+              (run 0.4 no-input))]
+    (is (= game/extra-life-every (:score s)))
+    (is (= (inc game/start-lives) (:lives s)) "跨過門檻加一命")
+    (is (= (* 2 game/extra-life-every) (:next-extra-life s)) "門檻往上推"))
+  (let [s (-> (world-with [(still-asteroid :large 512 184)])
+              (assoc :score (- game/extra-life-every 100))
+              (step #{:fire})
+              (run 0.4 no-input))]
+    (is (= game/start-lives (:lives s)) "沒跨過門檻就不加命")))
+
+;; --- 撞擊與重生 --------------------------------------------------------------
+
+(deftest ship-dies-when-it-hits-an-asteroid
+  (let [s (-> (world-with [(still-asteroid :large 512 384)])   ; 正壓在飛船上
+              (step no-input))]
+    (is (= (dec game/start-lives) (:lives s)))
+    (is (= :dead (:phase s)))
+    (is (close? (:timer s) game/respawn-delay 0.02))))
+
+(deftest invulnerable-ship-survives
+  (let [s (-> (world-with [(still-asteroid :large 512 384)])
+              (assoc :invuln game/invuln-time)
+              (run 1 no-input))]
+    (is (= game/start-lives (:lives s)) "無敵期間撞不死")
+    (is (= :playing (:phase s)))))
+
+(deftest new-game-starts-invulnerable
+  (let [s (game/initial-state 1)]
+    (is (pos? (:invuln s)))))
+
+(deftest respawn-waits-for-a-clear-centre
+  ;; 隕石停在正中央：倒數結束了也不能放人出來
+  (let [blocked (-> (world-with [(still-asteroid :large 512 384)])
+                    (step no-input)                 ; 撞死
+                    (run 5 no-input))]              ; 遠超過 respawn-delay
+    (is (= :dead (:phase blocked)) "中心沒淨空就一直等")
+    (is (zero? (:timer blocked))))
+  ;; 隕石在遠處：倒數結束就重生
+  (let [freed (-> (world-with [(still-asteroid :large 512 384)])
+                  (step no-input)
+                  (assoc :asteroids [(still-asteroid :large 60 60)])
+                  (run 3 no-input))]
+    (is (= :playing (:phase freed)))
+    (is (pos? (:invuln freed)) "重生後有無敵時間")
+    (is (= (game/initial-ship) (dissoc (:ship freed) :thrusting?))
+        "回到畫面中央、速度歸零")))
+
+(deftest last-life-ends-the-game
+  (let [s (-> (world-with [(still-asteroid :large 512 384)])
+              (assoc :lives 1)
+              (step no-input))]
+    (is (= 0 (:lives s)))
+    (is (= :game-over (:phase s)))))
+
+(deftest game-over-ignores-controls-until-space
+  (let [over    (-> (world-with [(still-asteroid :large 512 384)])
+                    (assoc :lives 1)
+                    (step no-input)
+                    (run 3 #{:thrust :left}))
+        pressed (step over #{:fire})]
+    (is (= :game-over (:phase over)) "推進與轉向不會重開")
+    (is (= :playing (:phase pressed)))
+    (is (= 0 (:score pressed)))
+    (is (= game/start-lives (:lives pressed)))
+    (is (= 1 (:level pressed)) "重開回到第一關")))
+
+;; --- 關卡遞增 ----------------------------------------------------------------
+
+(deftest asteroid-count-grows-then-caps
+  (is (= 4 (game/asteroids-for-level 1)))
+  (is (= 6 (game/asteroids-for-level 2)))
+  (is (= 8 (game/asteroids-for-level 3)))
+  (is (= game/max-level-asteroids (game/asteroids-for-level 5)))
+  (is (= game/max-level-asteroids (game/asteroids-for-level 20)) "上限之後不再增加"))
+
+(deftest clearing-the-field-advances-the-level
+  (let [cleared (-> (world-with []) (step no-input))]
+    (is (= :next-level (:phase cleared)))
+    (is (= 1 (:level cleared)) "停頓期間還沒換關"))
+  (let [next-wave (-> (world-with []) (run (+ game/level-pause 0.2) no-input))]
+    (is (= :playing (:phase next-wave)))
+    (is (= 2 (:level next-wave)))
+    (is (= (game/asteroids-for-level 2) (count (:asteroids next-wave))))
+    (is (every? #(= :large (:size %)) (:asteroids next-wave)))))
+
+(deftest ship-is-frozen-while-dead
+  (let [dead   (-> (world-with [(still-asteroid :large 512 384)]) (step no-input))
+        before (:ship dead)
+        after  (:ship (run dead 1 #{:thrust :right}))]
+    (is (= :dead (:phase dead)))
+    (is (= before after) "死亡期間輸入不影響飛船")))
+
+(deftest cannot-fire-while-dead
+  (let [dead (-> (world-with [(still-asteroid :large 512 384)])
+                 (step no-input)
+                 (assoc :bullets []))
+        shot (-> dead (step #{:fire}) (step no-input) (step #{:fire}))]
+    (is (empty? (:bullets shot)))))
 
 ;; --- 整體 -------------------------------------------------------------------
 

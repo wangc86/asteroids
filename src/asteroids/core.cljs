@@ -65,7 +65,51 @@
           py (wrap-coords y game/world-h margin)]
     (draw-one! px py)))
 
-(defn draw! [ctx {:keys [ship asteroids bullets t]}]
+;; --- HUD --------------------------------------------------------------------
+
+;; 分數每幀都要畫，但 (str n) 只在分數真的改變時才做一次——render 迴圈裡不做
+;; 字串操作，這是 CLAUDE.md 的規矩。
+(defonce score-cache (atom {:n -1 :s ""}))
+
+(defn- score-text [n]
+  (let [cached @score-cache]
+    (if (= n (:n cached))
+      (:s cached)
+      (let [s (str n)]
+        (reset! score-cache {:n n :s s})
+        s))))
+
+(defn- draw-life-icon!
+  "命數用小飛船表示，跟原版一樣。"
+  [ctx x y]
+  (.save ctx)
+  (.translate ctx x y)
+  (.rotate ctx (- (/ js/Math.PI 2)))     ; 朝上
+  (.scale ctx 0.7 0.7)
+  (draw-ship-body! ctx)
+  (.restore ctx))
+
+(defn- draw-hud! [ctx {:keys [score lives phase]}]
+  (set! (.-font ctx) "30px ui-monospace, Consolas, monospace")
+  (set! (.-textAlign ctx) "left")
+  (.fillText ctx (score-text score) 28 46)
+  (dotimes [i lives]
+    (draw-life-icon! ctx (+ 36 (* i 26)) 78))
+  (when (= :game-over phase)
+    (set! (.-textAlign ctx) "center")
+    (.fillText ctx "GAME OVER" (/ game/world-w 2) (- (/ game/world-h 2) 20))
+    (set! (.-font ctx) "20px ui-monospace, Consolas, monospace")
+    (.fillText ctx "PRESS SPACE" (/ game/world-w 2) (+ (/ game/world-h 2) 20))))
+
+;; --- 整個畫面 ----------------------------------------------------------------
+
+(defn- ship-visible?
+  "死亡與遊戲結束時不畫飛船；無敵期間每秒閃 4 次，讓玩家看得出還沒真正開始受傷害。"
+  [{:keys [phase invuln t]}]
+  (and (#{:playing :next-level} phase)
+       (or (zero? invuln) (< (mod (* t 8) 2) 1))))
+
+(defn draw! [ctx {:keys [ship asteroids bullets t] :as state}]
   (.clearRect ctx 0 0 game/world-w game/world-h)
   (set! (.-strokeStyle ctx) "#fff")
   (set! (.-fillStyle ctx) "#fff")
@@ -76,8 +120,10 @@
   (doseq [b bullets]
     (draw-wrapped! ctx (:x b) (:y b) 2
                    (fn [x y] (draw-bullet! ctx x y))))
-  (draw-wrapped! ctx (:x ship) (:y ship) game/ship-nose
-                 (fn [x y] (draw-ship! ctx ship t x y))))
+  (when (ship-visible? state)
+    (draw-wrapped! ctx (:x ship) (:y ship) game/ship-nose
+                   (fn [x y] (draw-ship! ctx ship t x y))))
+  (draw-hud! ctx state))
 
 ;; --- 輸入 -------------------------------------------------------------------
 
