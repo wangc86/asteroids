@@ -14,11 +14,84 @@
 (def ^:const drag 0.25)          ; 每秒速度指數衰減係數（0 = 完全無摩擦）
 (def ^:const max-speed 540)      ; px/秒
 
+;; 小行星三級，半徑與漂移速度區間（px/秒）
+(def asteroid-radius {:large 42 :medium 22 :small 11})
+(def asteroid-speed  {:large [18 46] :medium [30 78] :small [50 118]})
+(def ^:const asteroid-verts 12)
+(def ^:const jitter-min 0.72)    ; 頂點半徑相對基準半徑的抖動範圍，決定稜角有多亂
+(def ^:const jitter-max 1.12)
+(def ^:const level-1-asteroids 4)
+
 ;; hot reload 時 defonce 讓遊戲狀態存活下來
 (defonce state (atom nil))
 (defonce keys-down (atom #{}))
 (defonce started? (atom false))
 (defonce last-ts (atom nil))
+
+;; --- 亂數 -------------------------------------------------------------------
+;; 亂數狀態（seed）放在遊戲 state 裡跟著走，這樣連「分裂出新小行星」這種需要
+;; 亂數的行為都能留在純函數裡，同一個 seed 必定跑出同一場遊戲，方便測試。
+
+(defn- xorshift32 [s]
+  (let [s (bit-xor s (bit-shift-left s 13))
+        s (bit-xor s (unsigned-bit-shift-right s 17))
+        s (bit-xor s (bit-shift-left s 5))]
+    s))
+
+(defn rand-n
+  "從 seed 抽 n 個 [0,1) 亂數，回傳 [亂數向量 新seed]。"
+  [seed n]
+  (loop [s seed, i 0, acc (transient [])]
+    (if (< i n)
+      (let [s' (xorshift32 s)]
+        (recur s' (inc i)
+               (conj! acc (/ (unsigned-bit-shift-right s' 0) 4294967296))))
+      [(persistent! acc) s])))
+
+(defn- lerp [a b t] (+ a (* t (- b a))))
+
+;; --- 生成 -------------------------------------------------------------------
+
+(defn make-asteroid
+  "生一顆小行星：隨機方向、該級距內的隨機速度，外形是頂點半徑各自抖動過的多邊形。
+   小行星不自轉（原版就是這樣），所以頂點座標在這裡算好，render 迴圈不必再做三角函數。"
+  [seed size x y]
+  (let [[rs seed]     (rand-n seed (+ 2 asteroid-verts))
+        dir           (* tau (nth rs 0))
+        [s-min s-max] (asteroid-speed size)
+        speed         (lerp s-min s-max (nth rs 1))
+        radius        (asteroid-radius size)
+        step          (/ tau asteroid-verts)
+        points        (mapv (fn [i]
+                              (let [r (* radius (lerp jitter-min jitter-max
+                                                      (nth rs (+ 2 i))))
+                                    a (* i step)]
+                                [(* r (js/Math.cos a)) (* r (js/Math.sin a))]))
+                            (range asteroid-verts))]
+    [{:x x :y y
+      :vx (* speed (js/Math.cos dir))
+      :vy (* speed (js/Math.sin dir))
+      :size size
+      :points points}
+     seed]))
+
+(defn- edge-point
+  "沿著畫面四邊挑一點——新的一波從邊緣進場，不會直接壓在飛船頭上。"
+  [r1 r2]
+  (if (< r1 0.5)
+    [(* r2 world-w) (if (< r1 0.25) 0.0 (double world-h))]
+    [(if (< r1 0.75) 0.0 (double world-w)) (* r2 world-h)]))
+
+(defn spawn-wave
+  "在邊緣放 n 顆大隕石，回傳 [小行星向量 新seed]。"
+  [seed n]
+  (loop [i 0, seed seed, acc []]
+    (if (< i n)
+      (let [[rs seed]  (rand-n seed 2)
+            [x y]      (edge-point (nth rs 0) (nth rs 1))
+            [a seed]   (make-asteroid seed :large x y)]
+        (recur (inc i) seed (conj acc a)))
+      [acc seed])))
 
 (defn initial-ship []
   {:x     (/ world-w 2)
@@ -28,9 +101,15 @@
    ;; 螢幕座標 y 向下，所以 -π/2 是朝正上方
    :angle (- (/ js/Math.PI 2))})
 
-(defn initial-state []
-  {:ship (initial-ship)
-   :t    0.0})
+(defn initial-state
+  "不給 seed 就用時間當種子；給 seed 則整場遊戲完全重現，測試用。"
+  ([] (initial-state (bit-or (js/Date.now) 1)))   ; bit-or 1：截成 32 位元且保證非零
+  ([seed]
+   (let [[asteroids seed] (spawn-wave seed level-1-asteroids)]
+     {:ship      (initial-ship)
+      :asteroids asteroids
+      :seed      seed
+      :t         0.0})))
 
 ;; --- 純函數：推進一幀 ------------------------------------------------------
 
@@ -74,10 +153,18 @@
            :x          (wrap (+ (:x ship) (* vx dt)) world-w)
            :y          (wrap (+ (:y ship) (* vy dt)) world-h))))
 
+(defn drift
+  "小行星只有等速漂移加環繞，沒有加速度也不自轉。"
+  [{:keys [x y vx vy] :as a} dt]
+  (assoc a
+         :x (wrap (+ x (* vx dt)) world-w)
+         :y (wrap (+ y (* vy dt)) world-h)))
+
 (defn tick [state dt inputs]
   (-> state
       (update :t + dt)
-      (update :ship update-ship dt inputs)))
+      (update :ship update-ship dt inputs)
+      (update :asteroids (fn [as] (mapv #(drift % dt) as)))))
 
 ;; --- Side effect：繪圖 -----------------------------------------------------
 
@@ -103,18 +190,50 @@
   (.lineTo ctx (- ship-notch 1) -4)
   (.stroke ctx))
 
-(defn draw! [ctx {:keys [ship t]}]
-  (.clearRect ctx 0 0 world-w world-h)
-  (set! (.-strokeStyle ctx) "#fff")
-  (set! (.-lineWidth ctx) 2)
+(defn- draw-ship! [ctx ship t x y]
   (.save ctx)
-  (.translate ctx (:x ship) (:y ship))
+  (.translate ctx x y)
   (.rotate ctx (:angle ship))
   (draw-ship-body! ctx)
   ;; 火焰每秒閃 10 次，跟原版一樣是靠閃爍表現推進而不是持續亮著
   (when (and (:thrusting? ship) (< (mod (* t 20) 2) 1))
     (draw-flame! ctx))
   (.restore ctx))
+
+(defn- draw-asteroid! [ctx {:keys [points]} x y]
+  (.save ctx)
+  (.translate ctx x y)
+  (.beginPath ctx)
+  (let [p0 (nth points 0)]
+    (.moveTo ctx (nth p0 0) (nth p0 1)))
+  (doseq [p (subvec points 1)]
+    (.lineTo ctx (nth p 0) (nth p 1)))
+  (.closePath ctx)
+  (.stroke ctx)
+  (.restore ctx))
+
+(defn- wrap-coords
+  "物體壓在邊界上時，回傳它在對側的鏡像座標，讓它跨越邊界是滑過去而不是整個彈過去。"
+  [v limit margin]
+  (cond
+    (< v margin)           [v (+ v limit)]
+    (> v (- limit margin)) [v (- v limit)]
+    :else                  [v]))
+
+(defn- draw-wrapped! [ctx x y margin draw-one!]
+  (doseq [px (wrap-coords x world-w margin)
+          py (wrap-coords y world-h margin)]
+    (draw-one! px py)))
+
+(defn draw! [ctx {:keys [ship asteroids t]}]
+  (.clearRect ctx 0 0 world-w world-h)
+  (set! (.-strokeStyle ctx) "#fff")
+  (set! (.-lineWidth ctx) 2)
+  (doseq [a asteroids]
+    (draw-wrapped! ctx (:x a) (:y a) (asteroid-radius (:size a))
+                   (fn [x y] (draw-asteroid! ctx a x y))))
+  (draw-wrapped! ctx (:x ship) (:y ship) ship-nose
+                 (fn [x y] (draw-ship! ctx ship t x y))))
 
 ;; --- 輸入 -------------------------------------------------------------------
 
