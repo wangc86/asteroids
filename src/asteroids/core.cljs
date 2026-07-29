@@ -14,13 +14,27 @@
 (def ^:const drag 0.25)          ; 每秒速度指數衰減係數（0 = 完全無摩擦）
 (def ^:const max-speed 540)      ; px/秒
 
+;; 機身在自己的座標系裡朝 +x，機鼻在前、機尾是個朝前凹的 V 字（原版造型）。
+;; ship-nose 同時也是子彈的出膛位置。
+(def ^:const ship-nose 14)
+(def ^:const ship-tail -10)
+(def ^:const ship-half-width 9)
+(def ^:const ship-notch -5)
+
 ;; 小行星三級，半徑與漂移速度區間（px/秒）
 (def asteroid-radius {:large 42 :medium 22 :small 11})
 (def asteroid-speed  {:large [18 46] :medium [30 78] :small [50 118]})
+(def next-size {:large :medium, :medium :small, :small nil})
 (def ^:const asteroid-verts 12)
 (def ^:const jitter-min 0.72)    ; 頂點半徑相對基準半徑的抖動範圍，決定稜角有多亂
 (def ^:const jitter-max 1.12)
 (def ^:const level-1-asteroids 4)
+
+;; 子彈。原版同時最多 4 發，且射速固定不加上飛船速度——所以船開到極速時
+;; 幾乎追得上自己的子彈，這個怪癖是原版手感的一部分。
+(def ^:const bullet-speed 620)   ; px/秒
+(def ^:const bullet-life 1.15)   ; 秒，約可飛過畫面七成寬
+(def ^:const max-bullets 4)
 
 ;; hot reload 時 defonce 讓遊戲狀態存活下來
 (defonce state (atom nil))
@@ -106,10 +120,13 @@
   ([] (initial-state (bit-or (js/Date.now) 1)))   ; bit-or 1：截成 32 位元且保證非零
   ([seed]
    (let [[asteroids seed] (spawn-wave seed level-1-asteroids)]
-     {:ship      (initial-ship)
-      :asteroids asteroids
-      :seed      seed
-      :t         0.0})))
+     {:ship       (initial-ship)
+      :asteroids  asteroids
+      :bullets    []
+      ;; 射擊是按一次打一發，不是按著不放連射，所以要記上一幀有沒有按著
+      :fire-held? false
+      :seed       seed
+      :t          0.0})))
 
 ;; --- 純函數：推進一幀 ------------------------------------------------------
 
@@ -160,19 +177,108 @@
          :x (wrap (+ x (* vx dt)) world-w)
          :y (wrap (+ y (* vy dt)) world-h)))
 
+;; --- 子彈 -------------------------------------------------------------------
+
+(defn- advance-bullets
+  "子彈跟著漂移環繞，壽命到了就消失——這是唯一會讓子彈消失的自然原因。"
+  [bullets dt]
+  (into []
+        (comp (map (fn [b]
+                     (assoc b
+                            :life (- (:life b) dt)
+                            :x    (wrap (+ (:x b) (* (:vx b) dt)) world-w)
+                            :y    (wrap (+ (:y b) (* (:vy b) dt)) world-h))))
+              (filter #(pos? (:life %))))
+        bullets))
+
+(defn- fire-bullet [{:keys [ship] :as state}]
+  (let [angle (:angle ship)
+        cos   (js/Math.cos angle)
+        sin   (js/Math.sin angle)]
+    (update state :bullets conj
+            {:x    (wrap (+ (:x ship) (* ship-nose cos)) world-w)
+             :y    (wrap (+ (:y ship) (* ship-nose sin)) world-h)
+             :vx   (* bullet-speed cos)
+             :vy   (* bullet-speed sin)
+             :life bullet-life})))
+
+(defn- maybe-fire [state inputs]
+  (let [pressed? (boolean (inputs :fire))
+        ;; 只在「這幀按下、上一幀沒按」的瞬間發射
+        fire?    (and pressed?
+                      (not (:fire-held? state))
+                      (< (count (:bullets state)) max-bullets))]
+    (-> (if fire? (fire-bullet state) state)
+        (assoc :fire-held? pressed?))))
+
+;; --- 碰撞與分裂 --------------------------------------------------------------
+
+(defn- wrap-delta
+  "環繞世界裡兩點的最短距離分量：畫面兩側是相連的，貼著左緣和貼著右緣其實很近。"
+  [d limit]
+  (let [half (/ limit 2)]
+    (cond
+      (> d half)     (- d limit)
+      (< d (- half)) (+ d limit)
+      :else          d)))
+
+(defn- hit?
+  "子彈中心落在小行星基準半徑內就算打中。外形是不規則多邊形，但用圓形近似
+   在這個尺寸下玩起來沒有違和，也省下多邊形內外判定。"
+  [b a]
+  (let [r  (asteroid-radius (:size a))
+        dx (wrap-delta (- (:x a) (:x b)) world-w)
+        dy (wrap-delta (- (:y a) (:y b)) world-h)]
+    (< (+ (* dx dx) (* dy dy)) (* r r))))
+
+(defn- first-hit-index [b asteroids already-hit]
+  (loop [i 0]
+    (when (< i (count asteroids))
+      (if (and (not (already-hit i)) (hit? b (nth asteroids i)))
+        i
+        (recur (inc i))))))
+
+(defn- split
+  "被打中的小行星裂成兩顆小一級的，方向各自重抽；最小級直接消失。"
+  [seed a]
+  (if-let [child (next-size (:size a))]
+    (let [[c1 seed] (make-asteroid seed child (:x a) (:y a))
+          [c2 seed] (make-asteroid seed child (:x a) (:y a))]
+      [[c1 c2] seed])
+    [[] seed]))
+
+(defn- resolve-hits [{:keys [asteroids bullets] :as state}]
+  (let [[survivors-b hit]
+        (reduce (fn [[bs hit] b]
+                  (if-let [i (first-hit-index b asteroids hit)]
+                    [bs (conj hit i)]          ; 子彈與小行星同歸於盡
+                    [(conj bs b) hit]))
+                [[] #{}]
+                bullets)]
+    (if (empty? hit)
+      state
+      (let [[children seed]
+            (reduce (fn [[acc seed] i]
+                      (let [[cs seed] (split seed (nth asteroids i))]
+                        [(into acc cs) seed]))
+                    [[] (:seed state)]
+                    hit)]
+        (assoc state
+               :bullets   survivors-b
+               :asteroids (into (into [] (keep-indexed #(when-not (hit %1) %2)) asteroids)
+                                children)
+               :seed      seed)))))
+
 (defn tick [state dt inputs]
   (-> state
       (update :t + dt)
       (update :ship update-ship dt inputs)
-      (update :asteroids (fn [as] (mapv #(drift % dt) as)))))
+      (update :asteroids (fn [as] (mapv #(drift % dt) as)))
+      (update :bullets advance-bullets dt)
+      (maybe-fire inputs)
+      (resolve-hits)))
 
 ;; --- Side effect：繪圖 -----------------------------------------------------
-
-;; 機身在自己的座標系裡朝 +x，機鼻在前、機尾是個朝前凹的 V 字（原版造型）
-(def ^:const ship-nose 14)
-(def ^:const ship-tail -10)
-(def ^:const ship-half-width 9)
-(def ^:const ship-notch -5)
 
 (defn- draw-ship-body! [ctx]
   (.beginPath ctx)
@@ -225,13 +331,20 @@
           py (wrap-coords y world-h margin)]
     (draw-one! px py)))
 
-(defn draw! [ctx {:keys [ship asteroids t]}]
+(defn- draw-bullet! [ctx x y]
+  (.fillRect ctx (- x 1.5) (- y 1.5) 3 3))
+
+(defn draw! [ctx {:keys [ship asteroids bullets t]}]
   (.clearRect ctx 0 0 world-w world-h)
   (set! (.-strokeStyle ctx) "#fff")
+  (set! (.-fillStyle ctx) "#fff")
   (set! (.-lineWidth ctx) 2)
   (doseq [a asteroids]
     (draw-wrapped! ctx (:x a) (:y a) (asteroid-radius (:size a))
                    (fn [x y] (draw-asteroid! ctx a x y))))
+  (doseq [b bullets]
+    (draw-wrapped! ctx (:x b) (:y b) 2
+                   (fn [x y] (draw-bullet! ctx x y))))
   (draw-wrapped! ctx (:x ship) (:y ship) ship-nose
                  (fn [x y] (draw-ship! ctx ship t x y))))
 
@@ -239,9 +352,10 @@
 
 ;; 用 .-code 而不是 .-key，換鍵盤配置也不會壞
 (def key->action
-  {"ArrowLeft"  :left   "KeyA" :left
-   "ArrowRight" :right  "KeyD" :right
-   "ArrowUp"    :thrust "KeyW" :thrust})
+  {"ArrowLeft"  :left   "KeyA"  :left
+   "ArrowRight" :right  "KeyD"  :right
+   "ArrowUp"    :thrust "KeyW"  :thrust
+   "Space"      :fire})
 
 (defn- init-input! []
   (js/window.addEventListener
