@@ -1,0 +1,14 @@
+{
+  "name": "asteroids",
+  "version": "0.1.0",
+  "description": "Atari Asteroids (1979) clone in ClojureScript + HTML5 Canvas",
+  "license": "GPL-3.0",
+  "private": true,
+  "scripts": {
+    "dev": "shadow-cljs watch app",
+    "release": "shadow-cljs release app"
+  },
+  "devDependencies": {
+    "shadow-cljs": "^2.28.20"
+  }
+}

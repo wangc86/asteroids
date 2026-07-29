@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "asteroids-dev",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["shadow-cljs", "watch", "app"],
+      "port": 8080
+    }
+  ]
+}

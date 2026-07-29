@@ -1,0 +1,3 @@
+# 一律以 LF 存進版控，簽出時也保持 LF（Windows 上不轉 CRLF），
+# 外部工具若寫入 CRLF，commit 時會被正規化回來，不會產生全檔假差異。
+* text=auto eol=lf
