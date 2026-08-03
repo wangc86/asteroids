@@ -68,6 +68,7 @@ npx shadow-cljs release app    # production build into public/js
 public/index.html             page shell and canvas CSS (4:3, fills the window)
 src/asteroids/game.cljs       pure logic: constants, RNG, spawning, tick, collisions
 src/asteroids/core.cljs       side effects: draw!, keyboard, canvas, rAF loop
+src/asteroids/sound.cljs      side effects: Web Audio synthesis
 test/asteroids/game_test.cljs unit tests for game
 shadow-cljs.edn               build config (:app → public, :test → node)
 ```
@@ -86,8 +87,8 @@ circular requires, so keep that direction when adding features.
 - `core`'s `state` / `started?` are `defonce`, so neither the game state nor the
   loop restarts on hot reload
 
-Audio (milestone 6) will become its own `asteroids.sound`; if the drawing code
-passes ~150 lines, split out `asteroids.render`.
+`asteroids.sound` is a leaf like `game`: `core` calls it, it calls nothing back.
+If the drawing code passes ~150 lines, split out `asteroids.render`.
 
 ## Tests
 
@@ -113,7 +114,7 @@ max-speed    540   ; px/second
 decouples the handling from the frame rate.
 
 Controls: `←` `→` turn, `↑` thrust (or `A` / `D` / `W`), `space` to fire and to
-restart after game over.
+restart after game over, `M` to mute.
 
 ## Asteroids (milestone 3)
 
@@ -174,6 +175,48 @@ changes**, so the render loop does no string work.
 > vector font; hand-drawing the digit strokes would get closer, but that is a
 > separate piece of work and does not affect the rules.
 
+## UFOs and audio (milestone 6)
+
+**Sound is driven by events, not by calls from `game`.** `tick` appends keywords
+to `:events` (`:fire`, `:bang-large`, `:beat-a`, `:ship-explode`, …) and `core`
+hands them to `asteroids.sound` after drawing. `:events` is cleared at the top of
+every `tick`, so it only ever holds the current frame. That keeps `tick` pure and
+makes "firing makes a sound" an ordinary assertion. **Never call `sound` from
+`game`.** Note that tests spanning several frames must accumulate `:events`
+themselves — the helper `events-during` does this.
+
+Two sounds are continuous rather than events, so `core` drives them from state
+each frame: `sound/thruster!` and `sound/saucer!`.
+
+**Web Audio needs a user gesture.** `sound/init!` is called from the `keydown`
+handler, not on page load; before the first key press there is no AudioContext
+at all. `M` toggles mute.
+
+UFO behaviour:
+
+- Enters from the left or right edge, crosses horizontally, and **leaves** at the
+  far side — it wraps vertically but not horizontally, so `move-ufo` returning
+  `nil` is a normal result
+- Zig-zags: every `ufo-turn-interval` it picks up, down or level again
+- The large saucer fires in random directions; the small one aims at the ship
+  with an error that shrinks from `ufo-aim-spread-max` to `ufo-aim-spread-min`
+  as the score approaches `ufo-aim-tighten-by`
+- Small saucers get commoner with score and are the only kind at and above
+  `small-ufo-only-score`
+- Saucer shots break asteroids too, but **only the player's shots score**
+  (bullets carry `:from`)
+- 200 points for the large saucer, 1000 for the small one
+- A saucer dies on contact with an asteroid or the ship, and a level will not end
+  while one is still on screen
+
+The heartbeat interval shrinks with the level and with time spent on it
+(`beat-interval`), bottoming out at `beat-interval-min`. `:level-t` resets each
+level. It plays during `:playing` and `:dead` but stops at `:game-over`.
+
+> The UFO numbers (speeds, fire rates, spawn delays, aim spread) were chosen by
+> me, not from measurements of the original, and have not been playtested. They
+> are the most likely thing in this milestone to need adjusting.
+
 ## Line endings
 
 `core.autocrlf = false`. An external tool once rewrote LICENSE's line endings
@@ -190,7 +233,7 @@ One commit per milestone, and each one must show a visible result in the browser
 - [x] 3. Asteroids: polygon generation, drift, wrap
 - [x] 4. Shooting and collisions: bullet lifecycle, three-tier splitting
 - [x] 5. Game rules: score, lives, level progression, invulnerable respawn
-- [ ] 6. UFOs and audio: large and small saucer AI, heartbeat that speeds up with the level
+- [x] 6. UFOs and audio: large and small saucer AI, heartbeat that speeds up with the level
 - [ ] 7. Deployment: `shadow-cljs release` + GitHub Pages
 
 ## Working agreement

@@ -63,6 +63,37 @@
   (min max-level-asteroids
        (+ level-1-asteroids (* level-asteroid-step (dec level)))))
 
+;; UFOs. The large saucer fires blindly; the small one aims at the ship and gets
+;; steadily more accurate as the score climbs. Above small-ufo-only-score the
+;; large one stops appearing altogether, which is how the original ramps up.
+(def ufo-radius {:large 20 :small 11})
+(def ufo-speed  {:large 120 :small 165})   ; px/second, horizontal
+(def ufo-score  {:large 200 :small 1000})
+(def ufo-fire-interval {:large 1.5 :small 1.0})   ; seconds
+(def ^:const ufo-turn-interval 1.1)       ; seconds between vertical course changes
+(def ^:const ufo-vertical-ratio 0.55)     ; vertical speed as a fraction of horizontal
+(def ^:const small-ufo-only-score 40000)  ; at and above this, only small saucers
+(def ^:const ufo-aim-spread-max 0.55)     ; radians of aiming error at score 0
+(def ^:const ufo-aim-spread-min 0.04)     ; ...and once the player is deep into a game
+(def ^:const ufo-aim-tighten-by 60000)    ; score at which the spread reaches its minimum
+(def ^:const ufo-delay-min 9.0)           ; seconds between saucers at level 1
+(def ^:const ufo-delay-max 20.0)
+(def ^:const ufo-delay-per-level 1.2)     ; each level shortens the wait
+(def ^:const ufo-delay-floor 4.0)
+
+;; The heartbeat: two alternating low thumps that speed up as a level wears on,
+;; and start faster on later levels.
+(def ^:const beat-interval-max 1.0)       ; seconds between beats at the start of level 1
+(def ^:const beat-interval-min 0.28)
+(def ^:const beat-speedup-per-level 0.06)
+(def ^:const beat-speedup-per-second 0.012)
+
+(defn beat-interval [level level-t]
+  (max beat-interval-min
+       (- beat-interval-max
+          (* beat-speedup-per-level (dec level))
+          (* beat-speedup-per-second level-t))))
+
 ;; --- Randomness -------------------------------------------------------------
 ;; The RNG state (seed) travels inside the game state. That keeps even
 ;; randomness-dependent behaviour — such as splitting an asteroid — inside pure
@@ -86,6 +117,16 @@
       [(persistent! acc) s])))
 
 (defn- lerp [a b t] (+ a (* t (- b a))))
+
+;; --- Sound events -----------------------------------------------------------
+;; tick cannot make a noise, so it appends event keywords to :events instead and
+;; core hands them to asteroids.sound. :events is cleared at the top of every
+;; tick, which keeps "firing makes a sound" an ordinary, testable assertion.
+
+(defn- emit [state event]
+  (update state :events conj event))
+
+(def bang-event {:large :bang-large, :medium :bang-medium, :small :bang-small})
 
 ;; --- Spawning ---------------------------------------------------------------
 
@@ -150,18 +191,24 @@
      {:ship            (initial-ship)
       :asteroids       asteroids
       :bullets         []
+      :ufo             nil
+      :ufo-timer       ufo-delay-max     ; the first saucer never arrives immediately
       ;; One shot per press rather than auto-fire, so we remember whether the
       ;; key was already down last frame.
       :fire-held?      false
       :score           0
       :lives           start-lives
       :level           1
+      :level-t         0.0        ; seconds spent on this level; drives the heartbeat
+      :beat-timer      0.0
+      :beat-flip?      false
       :next-extra-life extra-life-every
       ;; :playing normal play / :dead awaiting respawn /
       ;; :next-level between-wave pause / :game-over awaiting restart
       :phase           :playing
       :timer           0.0        ; countdown for the current phase; all phases share it
       :invuln          invuln-time
+      :events          []         ; sound events for this frame, consumed by core
       :seed            seed
       :t               0.0})))
 
@@ -236,16 +283,27 @@
               (filter #(pos? (:life %))))
         bullets))
 
+(defn- bullet
+  "Bullets carry :from so we can tell whose shot it was: the player's score
+   asteroids and can hit a saucer, a saucer's can kill the ship. Both destroy
+   asteroids."
+  [from x y angle]
+  {:x    (wrap x world-w)
+   :y    (wrap y world-h)
+   :vx   (* bullet-speed (js/Math.cos angle))
+   :vy   (* bullet-speed (js/Math.sin angle))
+   :life bullet-life
+   :from from})
+
 (defn- fire-bullet [{:keys [ship] :as state}]
-  (let [angle (:angle ship)
-        cos   (js/Math.cos angle)
-        sin   (js/Math.sin angle)]
-    (update state :bullets conj
-            {:x    (wrap (+ (:x ship) (* ship-nose cos)) world-w)
-             :y    (wrap (+ (:y ship) (* ship-nose sin)) world-h)
-             :vx   (* bullet-speed cos)
-             :vy   (* bullet-speed sin)
-             :life bullet-life})))
+  (let [angle (:angle ship)]
+    (-> state
+        (update :bullets conj
+                (bullet :player
+                        (+ (:x ship) (* ship-nose (js/Math.cos angle)))
+                        (+ (:y ship) (* ship-nose (js/Math.sin angle)))
+                        angle))
+        (emit :fire))))
 
 (defn- fire-edge?
   "Down this frame, up last frame — holding the key does not auto-fire.
@@ -273,15 +331,19 @@
       (< d (- half)) (+ d limit)
       :else          d)))
 
+(defn- within?
+  "Are the two points closer than r in the wrapping world?"
+  [x1 y1 x2 y2 r]
+  (let [dx (wrap-delta (- x2 x1) world-w)
+        dy (wrap-delta (- y2 y1) world-h)]
+    (< (+ (* dx dx) (* dy dy)) (* r r))))
+
 (defn- hit?
   "A hit is the bullet's centre falling within the asteroid's base radius. The
    outline is an irregular polygon, but a circle reads fine at this size and
    saves a point-in-polygon test."
   [b a]
-  (let [r  (asteroid-radius (:size a))
-        dx (wrap-delta (- (:x a) (:x b)) world-w)
-        dy (wrap-delta (- (:y a) (:y b)) world-h)]
-    (< (+ (* dx dx) (* dy dy)) (* r r))))
+  (within? (:x b) (:y b) (:x a) (:y a) (asteroid-radius (:size a))))
 
 (defn- first-hit-index [b asteroids already-hit]
   (loop [i 0]
@@ -308,18 +370,31 @@
   (if (>= (:score state) (:next-extra-life state))
     (-> state
         (update :lives inc)
-        (update :next-extra-life + extra-life-every))
+        (update :next-extra-life + extra-life-every)
+        (emit :extra-life))
     state))
 
-(defn- resolve-hits [{:keys [asteroids bullets] :as state}]
-  (let [[survivors-b hit]
-        (reduce (fn [[bs hit] b]
+(defn- hits-ufo? [b ufo]
+  (and (some? ufo)
+       (= :player (:from b))                  ; a saucer cannot shoot itself down
+       (within? (:x b) (:y b) (:x ufo) (:y ufo) (ufo-radius (:size ufo)))))
+
+(defn- resolve-hits
+  "One pass over the bullets, deciding what each one destroyed. A saucer's shots
+   break asteroids too, but only the player's shots score."
+  [{:keys [asteroids bullets ufo] :as state}]
+  (let [{:keys [live hit scored ufo-hit]}
+        (reduce (fn [{:keys [hit ufo-hit] :as acc} b]
                   (if-let [i (first-hit-index b asteroids hit)]
-                    [bs (conj hit i)]          ; bullet and asteroid destroy each other
-                    [(conj bs b) hit]))
-                [[] #{}]
+                    ;; bullet and asteroid destroy each other
+                    (cond-> (assoc acc :hit (conj hit i))
+                      (= :player (:from b)) (update :scored conj i))
+                    (if (and (not ufo-hit) (hits-ufo? b ufo))
+                      (assoc acc :ufo-hit true)
+                      (update acc :live conj b))))
+                {:live [] :hit #{} :scored #{} :ufo-hit false}
                 bullets)]
-    (if (empty? hit)
+    (if (and (empty? hit) (not ufo-hit))
       state
       (let [[children seed]
             (reduce (fn [[acc seed] i]
@@ -327,23 +402,132 @@
                         [(into acc cs) seed]))
                     [[] (:seed state)]
                     hit)
-            gained (reduce + 0 (map #(score-for (:size (nth asteroids %))) hit))]
-        (-> state
-            (assoc :bullets   survivors-b
+            gained (+ (reduce + 0 (map #(score-for (:size (nth asteroids %))) scored))
+                      (if ufo-hit (ufo-score (:size ufo)) 0))]
+        (as-> state $
+          (assoc $ :bullets   live
                    :asteroids (into (into [] (keep-indexed #(when-not (hit %1) %2)) asteroids)
                                     children)
+                   :ufo       (if ufo-hit nil ufo)
                    :seed      seed)
-            (update :score + gained)
-            (award-extra-life))))))
+          (reduce (fn [st i] (emit st (bang-event (:size (nth asteroids i))))) $ hit)
+          (if ufo-hit (emit $ :bang-ufo) $)
+          (update $ :score + gained)
+          (award-extra-life $))))))
+
+;; --- UFOs -------------------------------------------------------------------
+
+(defn- ufo-kind
+  "Small saucers get commoner as the score rises, and above small-ufo-only-score
+   the large one stops showing up at all."
+  [score r]
+  (if (or (>= score small-ufo-only-score)
+          (< r (/ score small-ufo-only-score)))
+    :small
+    :large))
+
+(defn- spawn-ufo [seed score]
+  (let [[rs seed]  (rand-n seed 3)
+        kind       (ufo-kind score (nth rs 0))
+        from-left? (< (nth rs 1) 0.5)]
+    [{:x          (if from-left? 0.0 (double world-w))
+      :y          (* (nth rs 2) world-h)
+      :vx         (cond-> (ufo-speed kind) (not from-left?) -)
+      :vy         0.0
+      :size       kind
+      :fire-timer (ufo-fire-interval kind)
+      :turn-timer ufo-turn-interval}
+     seed]))
+
+(defn- next-ufo-delay
+  "Later levels send saucers more often."
+  [seed level]
+  (let [[rs seed] (rand-n seed 1)
+        shift     (* ufo-delay-per-level (dec level))
+        lo        (max ufo-delay-floor (- ufo-delay-min shift))
+        hi        (max (+ lo 2.0) (- ufo-delay-max shift))]
+    [(lerp lo hi (nth rs 0)) seed]))
+
+(defn- maybe-spawn-ufo [state]
+  (if (and (playing? state) (nil? (:ufo state)) (zero? (:ufo-timer state)))
+    (let [[ufo seed]   (spawn-ufo (:seed state) (:score state))
+          [delay seed] (next-ufo-delay seed (:level state))]
+      (-> state
+          (assoc :ufo ufo :ufo-timer delay :seed seed)
+          (emit :ufo-appear)))
+    state))
+
+(defn- move-ufo
+  "A saucer wraps vertically but not horizontally: reaching the far side it
+   simply leaves, which is why nil is a normal result here."
+  [ufo dt]
+  (let [x (+ (:x ufo) (* (:vx ufo) dt))
+        r (ufo-radius (:size ufo))]
+    (when (and (> x (- r)) (< x (+ world-w r)))
+      (assoc ufo
+             :x x
+             :y (wrap (+ (:y ufo) (* (:vy ufo) dt)) world-h)))))
+
+(defn- steer-ufo
+  "Every ufo-turn-interval the saucer picks up, down or level again — that is
+   the zig-zag the original flies."
+  [state dt]
+  (let [ufo (update (:ufo state) :turn-timer - dt)]
+    (if (pos? (:turn-timer ufo))
+      (assoc state :ufo ufo)
+      (let [[rs seed] (rand-n (:seed state) 1)
+            dir       (- (js/Math.floor (* 3 (nth rs 0))) 1)]
+        (assoc state
+               :seed seed
+               :ufo  (assoc ufo
+                            :vy (* dir (ufo-speed (:size ufo)) ufo-vertical-ratio)
+                            :turn-timer ufo-turn-interval))))))
+
+(defn- aim-angle
+  "The small saucer leads on the ship with an error that shrinks as the score
+   climbs; r spreads the shot evenly across that error band."
+  [ufo ship score r]
+  (let [dx     (wrap-delta (- (:x ship) (:x ufo)) world-w)
+        dy     (wrap-delta (- (:y ship) (:y ufo)) world-h)
+        spread (max ufo-aim-spread-min
+                    (lerp ufo-aim-spread-max ufo-aim-spread-min
+                          (min 1.0 (/ score ufo-aim-tighten-by))))]
+    (+ (js/Math.atan2 dy dx) (* (- r 0.5) 2 spread))))
+
+(defn- ufo-shoot [state dt]
+  (let [ufo (update (:ufo state) :fire-timer - dt)]
+    (if (or (pos? (:fire-timer ufo)) (not (playing? state)))
+      (assoc state :ufo ufo)
+      (let [[rs seed] (rand-n (:seed state) 1)
+            angle     (if (= :small (:size ufo))
+                        (aim-angle ufo (:ship state) (:score state) (nth rs 0))
+                        ;; the large saucer just sprays
+                        (* tau (nth rs 0)))]
+        (-> state
+            (assoc :seed seed
+                   :ufo  (assoc ufo :fire-timer (ufo-fire-interval (:size ufo))))
+            (update :bullets conj (bullet :ufo (:x ufo) (:y ufo) angle))
+            (emit :ufo-fire))))))
+
+(defn- advance-ufo [state dt]
+  (if (:ufo state)
+    (let [state (-> state (steer-ufo dt) (ufo-shoot dt))]
+      (update state :ufo move-ufo dt))
+    (update state :ufo-timer #(max 0.0 (- % dt)))))
+
+(defn- ufo-struck-by-asteroid
+  "A saucer that flies into a rock dies, the same way the ship does."
+  [state]
+  (let [ufo (:ufo state)]
+    (if (and ufo
+             (some (fn [a]
+                     (within? (:x ufo) (:y ufo) (:x a) (:y a)
+                              (+ (ufo-radius (:size ufo)) (asteroid-radius (:size a)))))
+                   (:asteroids state)))
+      (-> state (assoc :ufo nil) (emit :bang-ufo))
+      state)))
 
 ;; --- Lives, levels and phases -----------------------------------------------
-
-(defn- within?
-  "Are the two points closer than r in the wrapping world?"
-  [x1 y1 x2 y2 r]
-  (let [dx (wrap-delta (- x2 x1) world-w)
-        dy (wrap-delta (- y2 y1) world-h)]
-    (< (+ (* dx dx) (* dy dy)) (* r r))))
 
 (defn- ship-hit? [ship asteroids]
   (boolean
@@ -352,23 +536,55 @@
                     (+ ship-radius (asteroid-radius (:size a)))))
          asteroids)))
 
+(defn- ship-threatened?
+  "Three ways to die: an asteroid, the saucer's hull, or one of its shots."
+  [{:keys [ship asteroids ufo bullets]}]
+  (or (ship-hit? ship asteroids)
+      (and (some? ufo)
+           (within? (:x ship) (:y ship) (:x ufo) (:y ufo)
+                    (+ ship-radius (ufo-radius (:size ufo)))))
+      (boolean
+       (some (fn [b]
+               (and (= :ufo (:from b))
+                    (within? (:x ship) (:y ship) (:x b) (:y b) ship-radius)))
+             bullets))))
+
 (defn- ship-collision
-  "Hitting an asteroid costs a life. The asteroid is left alone — the
-   clear-respawn-point check is what prevents dying again on the spot."
+  "Being hit costs a life. Whatever hit us is left alone — the clear-respawn-point
+   check is what prevents dying again on the spot."
   [state]
   (if (and (playing? state)
            (zero? (:invuln state))
-           (ship-hit? (:ship state) (:asteroids state)))
+           (ship-threatened? state))
     (let [lives (dec (:lives state))]
-      (assoc state
-             :lives lives
-             :phase (if (pos? lives) :dead :game-over)
-             :timer respawn-delay))
+      (-> state
+          (assoc :lives lives
+                 :phase (if (pos? lives) :dead :game-over)
+                 :timer respawn-delay)
+          (emit :ship-explode)))
     state))
 
-(defn- check-level-clear [state]
-  (if (and (playing? state) (empty? (:asteroids state)))
+(defn- check-level-clear
+  "The saucer has to be gone too, otherwise it would keep shooting through the
+   between-wave pause."
+  [state]
+  (if (and (playing? state) (empty? (:asteroids state)) (nil? (:ufo state)))
     (assoc state :phase :next-level :timer level-pause)
+    state))
+
+(defn- heartbeat
+  "Two alternating thumps whose interval shrinks as the level wears on. The
+   original uses this as the game's entire soundtrack."
+  [state dt]
+  (if (#{:playing :dead} (:phase state))
+    (let [remaining (- (:beat-timer state) dt)]
+      (if (pos? remaining)
+        (assoc state :beat-timer remaining)
+        (let [flip (not (:beat-flip? state))]
+          (-> state
+              (assoc :beat-timer (beat-interval (:level state) (:level-t state))
+                     :beat-flip? flip)
+              (emit (if flip :beat-a :beat-b))))))
     state))
 
 (defn- respawn-clear?
@@ -391,11 +607,14 @@
 
     :next-level
     (if (zero? (:timer state))
-      (let [level     (inc (:level state))
-            [as seed] (spawn-wave (:seed state) (asteroids-for-level level))]
+      (let [level        (inc (:level state))
+            [as seed]    (spawn-wave (:seed state) (asteroids-for-level level))
+            [delay seed] (next-ufo-delay seed level)]
         (assoc state
                :level     level
+               :level-t   0.0     ; the heartbeat starts over each level
                :asteroids as
+               :ufo-timer delay
                :seed      seed
                :invuln    invuln-time
                :phase     :playing))
@@ -412,15 +631,21 @@
   "Advance one frame. inputs is a set of action keywords, e.g. #{:left :thrust :fire}."
   [state dt inputs]
   (-> state
+      (assoc :events [])          ; last frame's sounds have already been played
       (update :t + dt)
       (update :invuln #(max 0.0 (- % dt)))
       (update :timer #(max 0.0 (- % dt)))
-      (cond-> (playing? state) (update :ship update-ship dt inputs))
+      (cond-> (playing? state) (-> (update :ship update-ship dt inputs)
+                                   (update :level-t + dt)))
       (update :asteroids (fn [as] (mapv #(drift % dt) as)))
+      (advance-ufo dt)
+      (maybe-spawn-ufo)
       (update :bullets advance-bullets dt)
       (maybe-fire inputs)
       (resolve-hits)
+      (ufo-struck-by-asteroid)
       (ship-collision)
+      (heartbeat dt)
       (check-level-clear)
       (advance-phase inputs)
       ;; Record the key state last, so every edge test above saw the same frame.

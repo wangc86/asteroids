@@ -2,7 +2,8 @@
   "Every side effect lives here: canvas drawing, keyboard events, and the
    requestAnimationFrame loop. The rules themselves are in asteroids.game,
    which never touches the browser."
-  (:require [asteroids.game :as game]))
+  (:require [asteroids.game :as game]
+            [asteroids.sound :as sound]))
 
 ;; defonce keeps the game state alive across hot reloads.
 (defonce state (atom nil))
@@ -53,6 +54,36 @@
 
 (defn- draw-bullet! [ctx x y]
   (.fillRect ctx (- x 1.5) (- y 1.5) 3 3))
+
+(defn- draw-ufo!
+  "The classic saucer: a flattened hexagonal hull with a dome on top and a line
+   across each seam. Drawn from the radius so both sizes share one outline."
+  [ctx size x y]
+  (let [r (game/ufo-radius size)]
+    (.save ctx)
+    (.translate ctx x y)
+    (.beginPath ctx)
+    (.moveTo ctx (- r) 0)
+    (.lineTo ctx (* -0.45 r) (* -0.36 r))
+    (.lineTo ctx (* 0.45 r) (* -0.36 r))
+    (.lineTo ctx r 0)
+    (.lineTo ctx (* 0.45 r) (* 0.36 r))
+    (.lineTo ctx (* -0.45 r) (* 0.36 r))
+    (.closePath ctx)
+    (.stroke ctx)
+    ;; the dome
+    (.beginPath ctx)
+    (.moveTo ctx (* -0.45 r) (* -0.36 r))
+    (.lineTo ctx (* -0.2 r) (* -0.66 r))
+    (.lineTo ctx (* 0.2 r) (* -0.66 r))
+    (.lineTo ctx (* 0.45 r) (* -0.36 r))
+    (.stroke ctx)
+    ;; the two hull seams
+    (.beginPath ctx)
+    (.moveTo ctx (- r) 0)
+    (.lineTo ctx r 0)
+    (.stroke ctx)
+    (.restore ctx)))
 
 (defn- wrap-coords
   "When an object straddles an edge, also give its mirrored coordinate on the
@@ -114,7 +145,7 @@
   (and (#{:playing :next-level} phase)
        (or (zero? invuln) (< (mod (* t 8) 2) 1))))
 
-(defn draw! [ctx {:keys [ship asteroids bullets t] :as state}]
+(defn draw! [ctx {:keys [ship asteroids bullets ufo t] :as state}]
   (.clearRect ctx 0 0 game/world-w game/world-h)
   (set! (.-strokeStyle ctx) "#fff")
   (set! (.-fillStyle ctx) "#fff")
@@ -125,6 +156,10 @@
   (doseq [b bullets]
     (draw-wrapped! ctx (:x b) (:y b) 2
                    (fn [x y] (draw-bullet! ctx x y))))
+  (when ufo
+    ;; A saucer wraps vertically only, so it needs no horizontal mirror.
+    (draw-wrapped! ctx (:x ufo) (:y ufo) (game/ufo-radius (:size ufo))
+                   (fn [x y] (draw-ufo! ctx (:size ufo) x y))))
   (when (ship-visible? state)
     (draw-wrapped! ctx (:x ship) (:y ship) game/ship-nose
                    (fn [x y] (draw-ship! ctx ship t x y))))
@@ -143,6 +178,11 @@
   (js/window.addEventListener
    "keydown"
    (fn [e]
+     ;; Browsers will not start an AudioContext without a user gesture, so the
+     ;; first key press is where audio comes to life.
+     (sound/init!)
+     (when (= "KeyM" (.-code e))
+       (sound/toggle-mute!))
      (when-let [action (key->action (.-code e))]
        ;; Stop the arrow keys and space from scrolling the page.
        (.preventDefault e)
@@ -187,7 +227,13 @@
     (reset! last-ts ts)
     (ensure-size! el)
     (swap! state game/tick dt @keys-down)
-    (draw! (.getContext el "2d") @state))
+    (let [s @state]
+      (draw! (.getContext el "2d") s)
+      ;; game decided what happened; sound decides what it sounds like.
+      (doseq [event (:events s)]
+        (sound/play! event))
+      (sound/thruster! (and (game/playing? s) (:thrusting? (:ship s))))
+      (sound/saucer! (:size (:ufo s)))))
   (js/requestAnimationFrame frame!))
 
 (defn init! []

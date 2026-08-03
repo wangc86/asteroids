@@ -45,6 +45,18 @@
          :bullets   []
          :invuln    0.0))
 
+(defn- events-during
+  "Collect every sound event emitted while advancing secs seconds. :events only
+   ever holds the current frame's sounds, so anything spanning frames has to be
+   accumulated."
+  [state secs inputs]
+  (second
+   (reduce (fn [[st acc] _]
+             (let [st (step st inputs)]
+               [st (into acc (:events st))]))
+           [state []]
+           (range (js/Math.round (* 60 secs))))))
+
 (defn- open-space
   "Leave a single asteroid far away in a corner: the space ahead of the ship is
    effectively empty, but the field is not clear so the level does not end.
@@ -357,6 +369,191 @@
                  (assoc :bullets []))
         shot (-> dead (step #{:fire}) (step no-input) (step #{:fire}))]
     (is (empty? (:bullets shot)))))
+
+;; --- UFOs -------------------------------------------------------------------
+
+(defn- with-ufo
+  "Drop a saucer of the given kind at (x, y), flying right, with its timers
+   freshly wound."
+  [state kind x y]
+  (assoc state :ufo {:x (double x) :y (double y)
+                     :vx (game/ufo-speed kind) :vy 0.0
+                     :size kind
+                     :fire-timer (game/ufo-fire-interval kind)
+                     :turn-timer game/ufo-turn-interval}))
+
+(deftest a-saucer-eventually-arrives
+  (let [s (-> (open-space (game/initial-state 5))
+              (assoc :ufo-timer 0.1)
+              (run 0.3 no-input))
+        {:keys [ufo]} s]
+    (is (some? ufo))
+    (is (contains? #{:large :small} (:size ufo)))
+    (is (or (close? (:x ufo) 0 (* 2 (game/ufo-speed (:size ufo))))
+            (close? (:x ufo) game/world-w (* 2 (game/ufo-speed (:size ufo)))))
+        "it enters from one of the side edges")
+    (is (some #{:ufo-appear} (:events (-> (open-space (game/initial-state 5))
+                                          (assoc :ufo-timer 0.0)
+                                          (step no-input)))))))
+
+(deftest saucer-choice-follows-the-score
+  (is (= :large (game/ufo-kind 0 0.5)) "at zero score the large one always shows up")
+  (is (= :small (game/ufo-kind game/small-ufo-only-score 0.99))
+      "past the threshold only small ones appear")
+  (is (= :small (game/ufo-kind (* 0.9 game/small-ufo-only-score) 0.1))
+      "in between, small ones grow commoner"))
+
+(deftest saucer-crosses-and-leaves-without-wrapping
+  (let [crossing (-> (open-space (game/initial-state 5))
+                     (with-ufo :large 40 300)
+                     (run 3 no-input))
+        gone     (-> (open-space (game/initial-state 5))
+                     (with-ufo :large 40 300)
+                     (run 12 no-input)
+                     (assoc :ufo-timer 999.0))]
+    (is (some? (:ufo crossing)) "still on screen part way across")
+    (is (> (:x (:ufo crossing)) 40) "and moving right")
+    (is (nil? (:ufo gone)) "it exits the far edge instead of wrapping")))
+
+(deftest saucer-wraps-vertically
+  (let [s (-> (open-space (game/initial-state 5))
+              (with-ufo :large 500 10)
+              (assoc-in [:ufo :vy] -200.0)
+              (assoc-in [:ufo :turn-timer] 99.0)
+              (run 0.5 no-input))]
+    (is (> (:y (:ufo s)) 600) "off the top and back on the bottom")))
+
+(deftest saucer-shoots
+  (let [s (-> (open-space (game/initial-state 5))
+              (with-ufo :large 500 300)
+              (run (+ (game/ufo-fire-interval :large) 0.05) no-input))
+        shots (filter #(= :ufo (:from %)) (:bullets s))]
+    (is (= 1 (count shots)) "one shot per fire interval")
+    (is (some #{:ufo-fire} (:events (-> (open-space (game/initial-state 5))
+                                        (with-ufo :large 500 300)
+                                        (assoc-in [:ufo :fire-timer] 0.001)
+                                        (step no-input)))))))
+
+(deftest a-small-saucer-aims-at-the-ship
+  ;; Ship at the centre, saucer directly to its left: an accurate shot flies
+  ;; right, i.e. angle near 0.
+  (let [s      (-> (world-with [])
+                   (assoc :score game/ufo-aim-tighten-by)   ; fully accurate by now
+                   (with-ufo :small 200 384)
+                   (assoc-in [:ufo :fire-timer] 0.001)
+                   (step no-input))
+        shot   (first (filter #(= :ufo (:from %)) (:bullets s)))
+        angle  (js/Math.atan2 (:vy shot) (:vx shot))]
+    (is (close? angle 0 (+ game/ufo-aim-spread-min 0.01)))))
+
+(deftest player-shots-destroy-a-saucer-and-score
+  (let [s (-> (world-with [])
+              (with-ufo :large 512 184)
+              (assoc-in [:ufo :vx] 0.0)
+              (step #{:fire})
+              (run 0.4 no-input))]
+    (is (nil? (:ufo s)))
+    (is (= (game/ufo-score :large) (:score s)))
+    (is (some #{:bang-ufo} (-> (world-with [])
+                               (with-ufo :large 512 184)
+                               (assoc-in [:ufo :vx] 0.0)
+                               (step #{:fire})
+                               (events-during 0.4 no-input))))))
+
+(deftest a-saucer-cannot-shoot-itself-down
+  (let [s (-> (world-with [])
+              (with-ufo :large 500 300)
+              (assoc-in [:ufo :vx] 0.0)
+              (assoc :bullets [{:x 500.0 :y 300.0 :vx 0.0 :vy 0.0 :life 1.0 :from :ufo}])
+              (step no-input))]
+    (is (some? (:ufo s)))))
+
+(deftest saucer-shots-kill-the-ship
+  (let [s (-> (world-with [])
+              (assoc :bullets [{:x 512.0 :y 384.0 :vx 0.0 :vy 0.0 :life 1.0 :from :ufo}])
+              (step no-input))]
+    (is (= (dec game/start-lives) (:lives s)))
+    (is (= :dead (:phase s)))))
+
+(deftest saucer-shots-break-asteroids-but-do-not-score
+  (let [s (-> (world-with [(still-asteroid :large 512 300)])
+              (assoc :bullets [{:x 512.0 :y 300.0 :vx 0.0 :vy 0.0 :life 1.0 :from :ufo}])
+              (step no-input))]
+    (is (= [:medium :medium] (sizes s)))
+    (is (= 0 (:score s)) "the player gets nothing for a saucer's stray shot")))
+
+(deftest flying-into-the-ship-or-a-rock-destroys-the-saucer
+  (let [rammed (-> (world-with [])
+                   (with-ufo :large 512 384)
+                   (step no-input))
+        rocked (-> (world-with [(still-asteroid :large 500 300)])
+                   (with-ufo :large 500 300)
+                   (step no-input))]
+    (is (= (dec game/start-lives) (:lives rammed)) "the ship dies too")
+    (is (nil? (:ufo rocked)))
+    (is (some #{:bang-ufo} (:events rocked)))))
+
+(deftest a-level-does-not-end-while-a-saucer-is-around
+  (let [held (-> (world-with [])
+                 (with-ufo :large 500 300)
+                 (step no-input))]
+    (is (= :playing (:phase held))))
+  (let [ended (-> (world-with []) (step no-input))]
+    (is (= :next-level (:phase ended)))))
+
+;; --- Heartbeat --------------------------------------------------------------
+
+(deftest the-heartbeat-speeds-up
+  (is (close? (game/beat-interval 1 0) game/beat-interval-max 1e-9)
+      "level 1 starts at the slowest interval")
+  (is (< (game/beat-interval 3 0) (game/beat-interval 1 0))
+      "later levels start faster")
+  (is (< (game/beat-interval 1 30) (game/beat-interval 1 0))
+      "and it accelerates as the level wears on")
+  (is (close? (game/beat-interval 20 600) game/beat-interval-min 1e-9)
+      "but never faster than the floor"))
+
+(deftest the-heartbeat-alternates-two-thumps
+  (let [beats (filter #{:beat-a :beat-b}
+                      (events-during (open-space (game/initial-state 3)) 3 no-input))]
+    (is (<= 3 (count beats)) "several beats within three seconds")
+    (is (every? (fn [[a b]] (not= a b)) (partition 2 1 beats))
+        "the two thumps alternate")))
+
+(deftest the-heartbeat-stops-at-game-over
+  (let [over (-> (world-with [(still-asteroid :large 512 384)])
+                 (assoc :lives 1)
+                 (step no-input)
+                 (run 2 no-input))]
+    (is (= :game-over (:phase over)))
+    (is (empty? (filter #{:beat-a :beat-b} (:events over))))))
+
+;; --- Sound events -----------------------------------------------------------
+
+(deftest events-are-emitted-and-then-cleared
+  (let [fired (step (open-space (game/initial-state 1)) #{:fire})]
+    (is (some #{:fire} (:events fired)))
+    (is (not (some #{:fire} (:events (step fired no-input))))
+        "each frame reports only its own sounds")))
+
+(deftest each-asteroid-size-bangs-differently
+  (doseq [[size event] [[:large :bang-large]
+                        [:medium :bang-medium]
+                        [:small :bang-small]]]
+    (testing (name size)
+      (let [events (-> (world-with [(still-asteroid size 512 184)])
+                       (step #{:fire})
+                       (events-during 0.5 no-input))]
+        (is (some #{event} events))))))
+
+(deftest losing-a-ship-and-gaining-a-life-both-make-a-sound
+  (let [dead (-> (world-with [(still-asteroid :large 512 384)]) (step no-input))
+        life (-> (world-with [(still-asteroid :large 512 184)])
+                 (assoc :score (- game/extra-life-every 20))
+                 (step #{:fire})
+                 (run 0.4 no-input))]
+    (is (some #{:ship-explode} (:events dead)))
+    (is (= (inc game/start-lives) (:lives life)))))
 
 ;; --- End to end -------------------------------------------------------------
 

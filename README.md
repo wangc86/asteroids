@@ -23,10 +23,21 @@ Then open <http://localhost:8080>.
 | `←` `→` or `A` `D` | Turn |
 | `↑` or `W` | Thrust |
 | `Space` | Fire, and restart after game over |
+| `M` | Mute |
 
 Scoring follows the original: 20 points for a large asteroid, 50 for a medium,
 100 for a small, and an extra life every 10,000 points. You start with three
 lives. Each level adds two more asteroids, up to eleven.
+
+Flying saucers come through periodically. The large one (200 points) sprays
+shots in random directions; the small one (1,000 points) aims at you, and gets
+more accurate the higher your score. Past 40,000 points the large one stops
+showing up altogether. Their shots break asteroids too, though you get no credit
+for the rocks they clear.
+
+Every sound is synthesised in code — there are no audio files. Browsers will not
+start audio without a user gesture, so the first key you press is what switches
+it on.
 
 Two details are deliberately faithful rather than modernised. Shots travel at a
 fixed speed and do **not** inherit the ship's velocity, so at full throttle you
@@ -35,9 +46,10 @@ can very nearly catch up with your own bullets. And firing is one shot per press
 
 ## Status
 
-Milestones 1–5 are done: ship handling, asteroids, shooting and splitting,
-scoring, lives, level progression and invulnerable respawns. Still to come are
-the UFOs with the heartbeat soundtrack, and a deployed build.
+Milestones 1–6 are done: ship handling, asteroids, shooting and splitting,
+scoring, lives, level progression, invulnerable respawns, both saucers, and the
+synthesised sound including the heartbeat that speeds up as a level wears on.
+A deployed build is what remains.
 
 ## How it is built
 
@@ -54,11 +66,19 @@ That split is enforced by the namespace layout, not just by convention:
 ```
 src/asteroids/game.cljs       pure logic — constants, RNG, spawning, tick, collisions
 src/asteroids/core.cljs       side effects — canvas drawing, keyboard, the rAF loop
+src/asteroids/sound.cljs      side effects — Web Audio synthesis
 test/asteroids/game_test.cljs unit tests for game
 ```
 
 `asteroids.game` touches no browser API at all: no `document`, no canvas, not
-even an atom. The dependency direction is one-way, `core → game`.
+even an atom. The dependency direction is one-way, `core → game` and
+`core → sound`.
+
+Sound works the same way. `tick` cannot make a noise, so it appends event
+keywords to `:events` — `:fire`, `:bang-large`, `:beat-a` — and `core` hands
+them to `asteroids.sound` after drawing. The upshot is that "shooting a large
+asteroid makes the large explosion sound" is an ordinary unit test, with no
+audio hardware involved.
 
 The one design decision worth calling out is that **the random number generator's
 state lives inside the game state** (`:seed`, a small xorshift32). Anything that
