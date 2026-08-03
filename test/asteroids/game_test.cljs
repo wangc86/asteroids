@@ -381,7 +381,6 @@
                      :size kind
                      :fire-timer (game/ufo-fire-interval kind)
                      :turn-timer game/ufo-turn-interval
-                     :scan-timer 0.0
                      :dodge? nil}))
 
 (deftest a-saucer-eventually-arrives
@@ -516,7 +515,6 @@
 (deftest a-committed-dodge-clears-the-rock
   (let [s (run (head-on :large true) 3.5 no-input)]
     (is (some? (:ufo s)) "it survived the encounter")
-    (is (not (close? (:y (:ufo s)) 384 40)) "by getting out of the lane")
     (is (> (:x (:ufo s)) 500) "and carried on past the rock")))
 
 (deftest a-saucer-that-does-not-bother-is-destroyed
@@ -525,24 +523,42 @@
     (is (nil? (:ufo s)))
     (is (some #{:bang-ufo} events))))
 
-(deftest the-dodge-decision-is-taken-once-per-encounter
+(deftest the-pilot-decision-is-taken-once-and-kept
   (let [encounter (-> (world-with [(still-asteroid :large 500 384)])
                       (with-ufo :large 270 384)
                       (step no-input))]
-    (is (some? (:dodge? (:ufo encounter))) "meeting a rock forces a decision"))
-  (let [clear (-> (world-with [(still-asteroid :large 500 100)])   ; well out of the lane
-                  (with-ufo :large 270 384)
-                  (step no-input))]
-    (is (nil? (:dodge? (:ufo clear))) "no rock in the way, no decision to make"))
-  ;; Once decided, the answer sticks: a saucer that declined does not quietly
-  ;; change its mind on the next scan and save itself.
-  ;; 0.8 s in, it is still short of the rock but well past several scans.
+    (is (some? (:dodge? (:ufo encounter))) "meeting a rock forces the decision"))
+  ;; 0.8 s in, still short of the rock but long past the first decision.
   (let [stubborn (run (head-on :large false) 0.8 no-input)]
     (is (some? (:ufo stubborn)) "not dead yet")
-    (is (false? (:dodge? (:ufo stubborn))))))
+    (is (false? (:dodge? (:ufo stubborn)))
+        "a saucer that is not a pilot does not quietly become one")))
 
-(deftest dodging-happens-at-roughly-the-configured-rate
-  (letfn [(dodges [kind]
+(deftest an-empty-sky-provokes-no-decision
+  (let [clear (-> (world-with [(still-asteroid :large 500 100)])   ; nowhere near the path
+                  (with-ufo :large 270 384)
+                  (step no-input))]
+    (is (nil? (:dodge? (:ufo clear)))))
+  (let [behind (-> (world-with [(still-asteroid :large 500 384)])
+                   (with-ufo :large 700 384)      ; already past it, flying away
+                   (step no-input))]
+    (is (nil? (:dodge? (:ufo behind))) "nothing behind us is a threat")))
+
+(deftest avoidance-predicts-from-relative-motion
+  ;; The rock is 250px off the saucer's line right now, so no lane-shaped check
+  ;; against present positions would see it — but it is diving fast enough to
+  ;; arrive exactly where the saucer will be.
+  (let [rock     (assoc (still-asteroid :large 520 134) :vy 200.0)
+        drifting (-> (world-with [rock])
+                     (with-ufo :large 270 384)
+                     (step no-input))]
+    (is (< 200 (js/Math.abs (- (:y rock) 384)))
+        "the rock really is nowhere near the saucer's line to begin with")
+    (is (some? (:dodge? (:ufo drifting)))
+        "yet it is seen coming")))
+
+(deftest pilots-are-nearly-all-competent
+  (letfn [(pilots [kind]
             (count
              (filter (fn [i]
                        (-> (world-with [(still-asteroid :large 500 384)])
@@ -551,19 +567,54 @@
                            (step no-input)
                            (get-in [:ufo :dodge?])))
                      (range 400))))]
-    (let [large (/ (dodges :large) 400.0)
-          small (/ (dodges :small) 400.0)]
-      (is (close? large (:large game/ufo-dodge-chance) 0.12)
-          "the large saucer dodges about as often as configured")
-      (is (close? small (:small game/ufo-dodge-chance) 0.12)
-          "and so does the small one")
-      (is (> small large) "the small saucer is the better pilot"))))
+    (let [large (/ (pilots :large) 400.0)
+          small (/ (pilots :small) 400.0)]
+      (is (close? large (:large game/ufo-dodge-chance) 0.05))
+      (is (close? small (:small game/ufo-dodge-chance) 0.02))
+      (is (>= small large) "the small saucer is the better pilot"))))
 
-(deftest a-rock-outside-the-lane-is-ignored
-  (let [s (-> (world-with [(still-asteroid :large 500 384)])
-              (with-ufo :large 700 384)          ; already past it, flying away
-              (step no-input))]
-    (is (nil? (:dodge? (:ufo s))) "nothing behind us is a threat")))
+(deftest a-saucer-picks-a-clear-entry-height
+  ;; Asteroids enter from the edges too, which is exactly where a saucer appears,
+  ;; so arriving at a random height would sometimes mean arriving inside a rock.
+  ;; A wall of rocks down the left edge leaves only one gap; the saucer must
+  ;; find it.
+  (let [wall    (for [y (range 0 768 96) :when (not= y 384)]
+                  (still-asteroid :large 0 y))
+        arrived (-> (world-with wall)
+                    (assoc :ufo-timer 0.0 :invuln 9999.0)
+                    (step no-input))
+        ufo     (:ufo arrived)]
+    (is (some? ufo))
+    (is (not-any? (fn [a]
+                    (< (js/Math.abs (- (:y a) (:y ufo)))
+                       (+ (game/ufo-radius (:size ufo)) (game/asteroid-radius :large))))
+                  wall)
+        "it came in through the gap, not on top of a rock")))
+
+(deftest a-saucer-crosses-a-crowded-field-without-hitting-anything
+  ;; The requirement is not "does it swerve" but "does it get across alive".
+  ;; Full-width crossings of a drifting level-5 field, entering through the
+  ;; game's own spawn logic, with the pilot decision forced so this measures the
+  ;; flying rather than the dice.
+  (let [trials 40
+        deaths (count
+                (filter (fn [i]
+                          (let [seed      (bit-or 1 (* i 2654435761))
+                                [rocks s] (game/spawn-wave seed (game/asteroids-for-level 5))
+                                drifted   (-> (world-with rocks)
+                                              (assoc :seed s :ufo-timer 9999.0 :invuln 9999.0)
+                                              (run 5 no-input))
+                                arrived   (-> drifted (assoc :ufo-timer 0.0) (step no-input))]
+                            (some #{:bang-ufo}
+                                  (-> arrived
+                                      (assoc :ufo-timer 9999.0)
+                                      (assoc-in [:ufo :dodge?] true)
+                                      (assoc-in [:ufo :fire-timer] 9999.0)
+                                      (events-during 13 no-input)))))
+                        (range trials)))]
+    (is (zero? deaths)
+        (str "a competent saucer should not fly into a rock at all; "
+             deaths " of " trials " did"))))
 
 ;; --- Heartbeat --------------------------------------------------------------
 

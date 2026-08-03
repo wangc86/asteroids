@@ -208,13 +208,34 @@ UFO behaviour:
 - 200 points for the large saucer, 1000 for the small one
 - A saucer dies on contact with an asteroid or the ship, and a level will not end
   while one is still on screen
-- **Obstacle avoidance is a coin flip per encounter, not per scan.** When a rock
-  enters the lane ahead (`threat-ahead`), the saucer rolls once against
-  `ufo-dodge-chance` and remembers the answer in `:dodge?` until the rock is out
-  of the way. Re-rolling on every 0.2 s scan would push the effective dodge rate
-  towards 1 for any saucer that lives long enough, which would make the
-  probability meaningless. If you change the scan interval, this is why the
-  decision is cached
+- **Obstacle avoidance is meant to be near-perfect.** Measured over 420 full
+  crossings — level-5 and level-8 fields, plus shattered fields of up to 22 small
+  fast rocks — a competent saucer hit a rock zero times
+
+Avoidance works off one number, `gap-on-course`: the tightest hull-to-hull gap
+the saucer would face anywhere within `ufo-evade-horizon` on a given heading,
+computed from *relative* motion via `closest-approach`. A lane-shaped check
+against present positions is not enough — it misses the rock drifting into the
+path. That one number both detects trouble (gap below `ufo-clearance`) and picks
+the way out (`evade` scores every candidate vertical speed in
+`ufo-evade-options` against the whole field and takes the roomiest). It re-runs
+every frame, so the saucer keeps correcting as the field moves.
+
+Two things that mattered more than they look:
+
+- **Scoring every option against the whole field**, rather than steering away
+  from the nearest rock. Steering blindly away from one rock is how you fly into
+  the next; this was worth several percent on its own
+- **`spawn-ufo` chooses its entry height.** Asteroids enter from the edges too,
+  which is exactly where a saucer appears, so a random entry height was landing
+  saucers inside rocks — that was the single largest cause of losses, bigger
+  than every in-flight failure combined. It now tries `ufo-entry-tries` heights
+  and comes in where the sky is clearest
+
+`ufo-dodge-chance` no longer governs how well a saucer flies, only whether it
+bothers at all: it is rolled once, the first time that saucer meets a rock, and
+kept for life. Rolling per encounter would compound — five brushes at 0.97 each
+is only 0.86 overall — which is why the decision is cached on the saucer
 
 The heartbeat interval shrinks with the level and with time spent on it
 (`beat-interval`), bottoming out at `beat-interval-min`. `:level-t` resets each

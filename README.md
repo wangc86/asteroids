@@ -35,10 +35,10 @@ more accurate the higher your score. Past 40,000 points the large one stops
 showing up altogether. Their shots break asteroids too, though you get no credit
 for the rocks they clear.
 
-Saucers watch the lane ahead and will sometimes swerve around an asteroid — the
-large one manages it about a third of the time, the small one about four times
-in five. The rest of the time you get to watch a flying saucer plough straight
-into a rock.
+Saucers are good pilots. They predict collisions from relative motion and steer
+clear, re-deciding every frame, so they will thread a crowded field rather than
+blunder into it — you have to shoot them down yourself. Very occasionally one
+turns out not to be a pilot at all and flies straight into a rock.
 
 Every sound is synthesised in code — there are no audio files. Browsers will not
 start audio without a user gesture, so the first key you press is what switches

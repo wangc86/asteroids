@@ -76,13 +76,17 @@
 (def ^:const ufo-aim-spread-max 0.55)     ; radians of aiming error at score 0
 (def ^:const ufo-aim-spread-min 0.04)     ; ...and once the player is deep into a game
 (def ^:const ufo-aim-tighten-by 60000)    ; score at which the spread reaches its minimum
-;; Obstacle avoidance. A saucer scans the lane ahead and, on meeting a rock,
-;; rolls once for whether it will bother getting out of the way. The small one
-;; is the better pilot, the same way it is the better shot.
-(def ufo-dodge-chance {:large 0.35 :small 0.8})
-(def ^:const ufo-look-ahead 240)          ; px ahead that counts as "on my path"
-(def ^:const ufo-lane-margin 26)          ; px of slack when judging the lane width
-(def ^:const ufo-scan-interval 0.2)       ; seconds between look-ahead scans
+;; Obstacle avoidance. A saucer predicts collisions from relative motion and
+;; steers clear, re-deciding every frame, which makes it very hard to hit a rock
+;; by accident. The chance below is only whether a given saucer is a competent
+;; pilot at all — rolled once, the first time it meets a rock, and kept for life.
+(def ufo-dodge-chance {:large 0.97 :small 0.995})
+(def ^:const ufo-evade-horizon 3.5)       ; seconds of lookahead
+(def ^:const ufo-evade-ratio 0.9)         ; vertical speed while evading, vs horizontal
+(def ^:const ufo-clearance 34)            ; px hull-to-hull below which we call it a threat
+(def ufo-evade-options                    ; fractions of the evade speed
+  [-1.0 -0.85 -0.7 -0.55 -0.4 -0.2 0.0 0.2 0.4 0.55 0.7 0.85 1.0])
+(def ^:const ufo-entry-tries 8)           ; entry heights considered when arriving
 
 (def ^:const ufo-delay-min 9.0)           ; seconds between saucers at level 1
 (def ^:const ufo-delay-max 20.0)
@@ -434,20 +438,30 @@
     :small
     :large))
 
-(defn- spawn-ufo [seed score]
+(declare gap-on-course)
+
+(defn- spawn-ufo
+  "Arrive at whichever of several entry heights has the clearest sky ahead.
+   Picking one at random would sometimes drop the saucer straight onto a rock —
+   asteroids enter from the edges too, which is exactly where a saucer appears."
+  [seed score asteroids]
   (let [[rs seed]  (rand-n seed 3)
         kind       (ufo-kind score (nth rs 0))
-        from-left? (< (nth rs 1) 0.5)]
-    [{:x          (if from-left? 0.0 (double world-w))
-      :y          (* (nth rs 2) world-h)
-      :vx         (cond-> (ufo-speed kind) (not from-left?) -)
-      :vy         0.0
-      :size       kind
-      :fire-timer (ufo-fire-interval kind)
-      :turn-timer ufo-turn-interval
-      :scan-timer 0.0      ; scan on the very first frame
-      :dodge?     nil}     ; nil = no rock in the way yet, so no decision to make
-     seed]))
+        from-left? (< (nth rs 1) 0.5)
+        base       {:x          (if from-left? 0.0 (double world-w))
+                    :vx         (cond-> (ufo-speed kind) (not from-left?) -)
+                    :vy         0.0
+                    :size       kind
+                    :fire-timer (ufo-fire-interval kind)
+                    :turn-timer ufo-turn-interval
+                    :dodge?     nil}   ; nil until this saucer first meets a rock
+        step       (/ world-h ufo-entry-tries)
+        candidates (map #(wrap (+ (* (nth rs 2) world-h) (* % step)) world-h)
+                        (range ufo-entry-tries))
+        entry      (apply max-key
+                          #(gap-on-course (assoc base :y %) (:vx base) 0.0 asteroids)
+                          candidates)]
+    [(assoc base :y entry) seed]))
 
 (defn- next-ufo-delay
   "Later levels send saucers more often."
@@ -460,7 +474,7 @@
 
 (defn- maybe-spawn-ufo [state]
   (if (and (playing? state) (nil? (:ufo state)) (zero? (:ufo-timer state)))
-    (let [[ufo seed]   (spawn-ufo (:seed state) (:score state))
+    (let [[ufo seed]   (spawn-ufo (:seed state) (:score state) (:asteroids state))
           [delay seed] (next-ufo-delay seed (:level state))]
       (-> state
           (assoc :ufo ufo :ufo-timer delay :seed seed)
@@ -493,57 +507,70 @@
                             :vy (* dir (ufo-speed (:size ufo)) ufo-vertical-ratio)
                             :turn-timer ufo-turn-interval))))))
 
-(defn- threat-ahead
-  "The nearest asteroid sitting in the lane the saucer is flying down, or nil.
-   Distances go through wrap-delta like everything else, so a rock about to wrap
-   into the saucer's path counts — it is just as lethal as one already there."
-  [{:keys [x y vx size]} asteroids]
-  (let [r   (ufo-radius size)
-        dir (if (pos? vx) 1 -1)]
-    (reduce (fn [best a]
-              (let [dx   (* dir (wrap-delta (- (:x a) x) world-w))
-                    dy   (wrap-delta (- (:y a) y) world-h)
-                    lane (+ r (asteroid-radius (:size a)) ufo-lane-margin)]
-                (if (and (pos? dx)
-                         (< dx ufo-look-ahead)
-                         (< (js/Math.abs dy) lane)
-                         (or (nil? best) (< dx (:dx best))))
-                  {:dx dx :dy dy}
-                  best)))
-            nil
-            asteroids)))
+(defn- closest-approach
+  "Two objects in straight-line relative motion: when are they nearest within
+   [0, horizon], and how near do they get? The relative path is a line, so this
+   is just projecting the relative position onto the relative velocity."
+  [px py vx vy horizon]
+  (let [vv (+ (* vx vx) (* vy vy))
+        t  (if (zero? vv)
+             0.0
+             (min horizon (max 0.0 (/ (- (+ (* px vx) (* py vy))) vv))))
+        dx (+ px (* vx t))
+        dy (+ py (* vy t))]
+    [t (js/Math.sqrt (+ (* dx dx) (* dy dy)))]))
 
-(defn- steer-away [ufo {:keys [dy]}]
-  (assoc ufo
-         ;; dy is where the rock is relative to us, so head the other way
-         :vy (* (if (pos? dy) -1 1) (ufo-speed (:size ufo)) ufo-vertical-ratio)
-         ;; hold the course, or the random zig-zag would undo the dodge
-         :turn-timer ufo-turn-interval))
+(defn- approach-gap
+  "Hull-to-hull gap at the closest approach with this asteroid, if the saucer
+   flies at (vx, vy). Negative means they collide. Both are moving, so this has
+   to work off relative motion — a lane-shaped check against present positions
+   misses the rock that is drifting into the path. Offsets use wrap-delta, so a
+   rock about to wrap around counts too."
+  [ufo vx vy a]
+  (let [px    (wrap-delta (- (:x a) (:x ufo)) world-w)
+        py    (wrap-delta (- (:y a) (:y ufo)) world-h)
+        [_ d] (closest-approach px py (- (:vx a) vx) (- (:vy a) vy) ufo-evade-horizon)]
+    (- d (ufo-radius (:size ufo)) (asteroid-radius (:size a)))))
+
+(defn gap-on-course
+  "The tightest squeeze the saucer would face anywhere in the lookahead on this
+   heading. One number to both detect trouble and choose the way out."
+  [ufo vx vy asteroids]
+  (reduce (fn [worst a] (min worst (approach-gap ufo vx vy a)))
+          ##Inf
+          asteroids))
+
+(defn- evade
+  "Try a spread of climb and dive rates plus the current heading, and take the
+   one with the most room. Scoring every option against the whole field is what
+   makes this reliable: steering blindly away from one rock is how you fly into
+   the next. Re-run every frame, so the saucer keeps correcting as things move."
+  [ufo asteroids]
+  (let [s       (* (ufo-speed (:size ufo)) ufo-evade-ratio)
+        ;; current heading first, so an already-good course wins ties and the
+        ;; saucer does not jitter between equally clear options
+        options (cons (:vy ufo) (map #(* % s) ufo-evade-options))
+        best    (apply max-key #(gap-on-course ufo (:vx ufo) % asteroids) options)]
+    (assoc ufo :vy best :turn-timer ufo-turn-interval)))
 
 (defn- avoid-asteroids
-  "Roll once per encounter, not once per scan. Re-rolling every scan would make
-   a saucer that lives long enough dodge with probability approaching 1, which
-   would defeat the point of having a chance at all. The decision is remembered
-   in :dodge? until the rock is no longer in the way."
-  [state dt]
-  (let [ufo (update (:ufo state) :scan-timer - dt)]
-    (if (pos? (:scan-timer ufo))
-      (assoc state :ufo ufo)
-      (let [ufo    (assoc ufo :scan-timer ufo-scan-interval)
-            threat (threat-ahead ufo (:asteroids state))]
-        (cond
-          ;; nothing in the way: forget the last decision so the next rock is a
-          ;; fresh roll of the dice
-          (nil? threat)     (assoc state :ufo (assoc ufo :dodge? nil))
-          (true? (:dodge? ufo)) (assoc state :ufo (steer-away ufo threat))
-          (false? (:dodge? ufo)) (assoc state :ufo ufo)
-          :else
-          (let [[rs seed] (rand-n (:seed state) 1)
-                dodge?    (< (nth rs 0) (ufo-dodge-chance (:size ufo)))]
-            (assoc state
-                   :seed seed
-                   :ufo  (cond-> (assoc ufo :dodge? dodge?)
-                           dodge? (steer-away threat)))))))))
+  "Whether a saucer bothers to fly properly is rolled once, the first time it
+   meets a rock, and kept for the rest of its life. Rolling again per encounter
+   would compound: five brushes with the field at 0.97 each is only 0.86 overall,
+   which is not the near-certainty we want."
+  [state]
+  (let [ufo (:ufo state)]
+    (if (>= (gap-on-course ufo (:vx ufo) (:vy ufo) (:asteroids state)) ufo-clearance)
+      state                                     ; the way ahead is clear
+      (case (:dodge? ufo)
+        true  (assoc state :ufo (evade ufo (:asteroids state)))
+        false state                             ; this one is not a pilot
+        (let [[rs seed] (rand-n (:seed state) 1)
+              dodge?    (< (nth rs 0) (ufo-dodge-chance (:size ufo)))]
+          (assoc state
+                 :seed seed
+                 :ufo  (cond-> (assoc ufo :dodge? dodge?)
+                         dodge? (evade (:asteroids state)))))))))
 
 (defn- aim-angle
   "The small saucer leads on the ship with an error that shrinks as the score
@@ -575,7 +602,7 @@
   (if (:ufo state)
     (-> state
         (steer-ufo dt)          ; the aimless zig-zag...
-        (avoid-asteroids dt)    ; ...which avoidance is allowed to override
+        (avoid-asteroids)       ; ...which avoidance is allowed to override
         (ufo-shoot dt)
         (update :ufo move-ufo dt))
     (update state :ufo-timer #(max 0.0 (- % dt)))))
