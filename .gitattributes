@@ -1,3 +1,4 @@
-# 一律以 LF 存進版控，簽出時也保持 LF（Windows 上不轉 CRLF），
-# 外部工具若寫入 CRLF，commit 時會被正規化回來，不會產生全檔假差異。
+# Store everything as LF in git and check it out as LF too (no CRLF on Windows).
+# If an external tool writes CRLF, it is normalised back on commit, so we never
+# see a whole file show up as a spurious diff.
 * text=auto eol=lf

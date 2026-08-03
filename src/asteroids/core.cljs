@@ -1,15 +1,16 @@
 (ns asteroids.core
-  "所有 side effect 都在這裡：Canvas 繪圖、鍵盤事件、requestAnimationFrame 迴圈。
-   遊戲規則本身在 asteroids.game，那邊完全不碰瀏覽器。"
+  "Every side effect lives here: canvas drawing, keyboard events, and the
+   requestAnimationFrame loop. The rules themselves are in asteroids.game,
+   which never touches the browser."
   (:require [asteroids.game :as game]))
 
-;; hot reload 時 defonce 讓遊戲狀態存活下來
+;; defonce keeps the game state alive across hot reloads.
 (defonce state (atom nil))
 (defonce keys-down (atom #{}))
 (defonce started? (atom false))
 (defonce last-ts (atom nil))
 
-;; --- 繪圖 -------------------------------------------------------------------
+;; --- Drawing ----------------------------------------------------------------
 
 (defn- draw-ship-body! [ctx]
   (.beginPath ctx)
@@ -32,7 +33,8 @@
   (.translate ctx x y)
   (.rotate ctx (:angle ship))
   (draw-ship-body! ctx)
-  ;; 火焰每秒閃 10 次，跟原版一樣是靠閃爍表現推進而不是持續亮著
+  ;; The flame blinks 10 times a second: like the original, thrust is shown by
+  ;; flicker rather than a steady flame.
   (when (and (:thrusting? ship) (< (mod (* t 20) 2) 1))
     (draw-flame! ctx))
   (.restore ctx))
@@ -53,7 +55,9 @@
   (.fillRect ctx (- x 1.5) (- y 1.5) 3 3))
 
 (defn- wrap-coords
-  "物體壓在邊界上時，回傳它在對側的鏡像座標，讓它跨越邊界是滑過去而不是整個彈過去。"
+  "When an object straddles an edge, also give its mirrored coordinate on the
+   opposite side, so crossing the border looks like sliding across rather than
+   teleporting."
   [v limit margin]
   (cond
     (< v margin)           [v (+ v limit)]
@@ -67,8 +71,8 @@
 
 ;; --- HUD --------------------------------------------------------------------
 
-;; 分數每幀都要畫，但 (str n) 只在分數真的改變時才做一次——render 迴圈裡不做
-;; 字串操作，這是 CLAUDE.md 的規矩。
+;; The score is drawn every frame, but (str n) only runs when the score
+;; actually changes — no string work in the render loop, as CLAUDE.md requires.
 (defonce score-cache (atom {:n -1 :s ""}))
 
 (defn- score-text [n]
@@ -80,11 +84,11 @@
         s))))
 
 (defn- draw-life-icon!
-  "命數用小飛船表示，跟原版一樣。"
+  "Lives are shown as little ships, the same way the original does it."
   [ctx x y]
   (.save ctx)
   (.translate ctx x y)
-  (.rotate ctx (- (/ js/Math.PI 2)))     ; 朝上
+  (.rotate ctx (- (/ js/Math.PI 2)))     ; point up
   (.scale ctx 0.7 0.7)
   (draw-ship-body! ctx)
   (.restore ctx))
@@ -101,10 +105,11 @@
     (set! (.-font ctx) "20px ui-monospace, Consolas, monospace")
     (.fillText ctx "PRESS SPACE" (/ game/world-w 2) (+ (/ game/world-h 2) 20))))
 
-;; --- 整個畫面 ----------------------------------------------------------------
+;; --- The whole frame --------------------------------------------------------
 
 (defn- ship-visible?
-  "死亡與遊戲結束時不畫飛船；無敵期間每秒閃 4 次，讓玩家看得出還沒真正開始受傷害。"
+  "No ship while dead or after game over; while invulnerable it blinks 4 times a
+   second so the player can see that damage has not started counting yet."
   [{:keys [phase invuln t]}]
   (and (#{:playing :next-level} phase)
        (or (zero? invuln) (< (mod (* t 8) 2) 1))))
@@ -125,9 +130,9 @@
                    (fn [x y] (draw-ship! ctx ship t x y))))
   (draw-hud! ctx state))
 
-;; --- 輸入 -------------------------------------------------------------------
+;; --- Input ------------------------------------------------------------------
 
-;; 用 .-code 而不是 .-key，換鍵盤配置也不會壞
+;; .-code rather than .-key, so a different keyboard layout does not break it.
 (def key->action
   {"ArrowLeft"  :left   "KeyA"  :left
    "ArrowRight" :right  "KeyD"  :right
@@ -139,7 +144,7 @@
    "keydown"
    (fn [e]
      (when-let [action (key->action (.-code e))]
-       ;; 擋掉方向鍵與空白鍵捲動頁面
+       ;; Stop the arrow keys and space from scrolling the page.
        (.preventDefault e)
        (swap! keys-down conj action))))
   (js/window.addEventListener
@@ -147,21 +152,23 @@
    (fn [e]
      (when-let [action (key->action (.-code e))]
        (swap! keys-down disj action))))
-  ;; 視窗失焦時鍵不會送 keyup，不清掉的話會變成卡住一直轉
+  ;; A window that loses focus never sends keyup; without this the ship would be
+  ;; left spinning on a stuck key.
   (js/window.addEventListener "blur" (fn [_] (reset! keys-down #{}))))
 
-;; --- Canvas / 迴圈 ---------------------------------------------------------
+;; --- Canvas and loop --------------------------------------------------------
 
 (defn canvas [] (js/document.getElementById "game"))
 
 (defn ensure-size!
-  "把畫布緩衝區對齊實際顯示尺寸（含 devicePixelRatio），並縮放 context，
-   讓繪圖端永遠使用 world-w × world-h 座標。尺寸沒變就什麼都不做。"
+  "Match the canvas buffer to its displayed size (including devicePixelRatio)
+   and scale the context, so the drawing side always works in world-w × world-h
+   coordinates. Does nothing when the size has not changed."
   [el]
   (let [dpr (or js/window.devicePixelRatio 1)
         w   (js/Math.round (* dpr (.-clientWidth el)))
         h   (js/Math.round (* dpr (.-clientHeight el)))]
-    ;; 分頁隱藏時 clientWidth 會是 0，這時先不動，等版面出來再說
+    ;; A hidden tab reports clientWidth 0; leave things alone until layout exists.
     (when (and (pos? w) (pos? h)
                (or (not= w (.-width el)) (not= h (.-height el))))
       (set! (.-width el) w)
@@ -173,7 +180,8 @@
 
 (defn frame! [ts]
   (let [prev (or @last-ts ts)
-        ;; 分頁切回來時 dt 會很大，夾住上限避免物體瞬移穿過東西
+        ;; Returning to a backgrounded tab produces a huge dt; cap it so nothing
+        ;; teleports straight through anything else.
         dt   (min 0.05 (/ (- ts prev) 1000.0))
         el   (canvas)]
     (reset! last-ts ts)
@@ -185,12 +193,14 @@
 (defn init! []
   (when (nil? @state)
     (reset! state (game/initial-state)))
-  ;; 只啟動一次迴圈與監聽；hot reload 後由 frame! 內的重新解析接手最新程式碼
+  ;; Start the loop and the listeners exactly once; after a hot reload the
+  ;; re-resolution inside frame! picks up the new code.
   (when-not @started?
     (reset! started? true)
     (init-input!)
     (js/requestAnimationFrame frame!)))
 
 (defn after-load! []
-  ;; 重新編譯後畫布 transform 與遊戲狀態都還在，什麼都不用做。
+  ;; After a recompile the canvas transform and the game state are both still
+  ;; there, so there is nothing to do.
   (js/console.log "reloaded"))

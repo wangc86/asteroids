@@ -11,7 +11,7 @@
          :modules    {:main {:init-fn asteroids.core/init!}}
          :devtools   {:after-load asteroids.core/after-load!}}
 
-  ;; 純邏輯的單元測試，在 node 上跑，不需要瀏覽器：npm test
+  ;; Unit tests for the pure logic, run under node without a browser: npm test
   :test {:target    :node-test
          :output-to "out/node-tests.js"
          :ns-regexp "-test$"

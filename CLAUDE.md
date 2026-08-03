@@ -1,173 +1,206 @@
-# Asteroids — ClojureScript 瀏覽器版
+# Asteroids — ClojureScript, in the browser
 
-經典 Atari Asteroids (1979) 的復刻，用 ClojureScript 寫，在瀏覽器中以 HTML5 Canvas 執行。
+A remake of the classic Atari Asteroids (1979), written in ClojureScript and
+running on an HTML5 canvas.
 
 - Repo: https://github.com/wangc86/asteroids
-- 授權: GPL-3.0
-- 本機路徑: `C:\Users\chaot\code\asteroids`
+- License: GPL-3.0
+- Local path: `C:\Users\chaot\code\asteroids`
 
-## 技術決策（2026-07-29 議定）
+## Technical decisions (agreed 2026-07-29)
 
-| 項目 | 決定 | 理由 |
+| Topic | Decision | Why |
 |---|---|---|
-| 語言 | ClojureScript | 使用者指定 |
-| 建置工具 | shadow-cljs | hot reload 保留遊戲狀態、npm 整合、錯誤訊息友善 |
-| 渲染 | Canvas 2D (`moveTo`/`lineTo`/`stroke`) | 原版是向量顯示器線條圖形，天生對味 |
-| **不用** Reagent / re-frame | — | Canvas 遊戲不需要 React DOM diff；HUD 直接畫在 canvas 上 |
-| 遊戲迴圈 | `requestAnimationFrame` + delta time | |
-| 輸入 | `keydown`/`keyup` 存入 set | 避免 OS 按鍵重複延遲 |
-| 音效 | Web Audio API 程式合成 | 原版心跳聲/推進器噪音不需音檔 |
-| 遊戲範圍 | **忠實復刻原版** | 含三級小行星分裂、大小 UFO、hyperspace、心跳音效、關卡遞增 |
+| Language | ClojureScript | chosen by the user |
+| Build tool | shadow-cljs | hot reload preserves game state, npm integration, friendly error messages |
+| Rendering | Canvas 2D (`moveTo`/`lineTo`/`stroke`) | the original is vector-display line art, a natural fit |
+| **No** Reagent / re-frame | — | a canvas game needs no React DOM diffing; the HUD is drawn straight onto the canvas |
+| Game loop | `requestAnimationFrame` + delta time | |
+| Input | `keydown`/`keyup` into a set | avoids the OS key-repeat delay |
+| Audio | Web Audio API, synthesised in code | the original's heartbeat and thruster noise need no audio files |
+| Scope | **faithful remake of the original** | three asteroid tiers, large and small UFOs, hyperspace, heartbeat audio, level progression |
 
-## 核心架構
+## Core architecture
 
-遊戲狀態是一個 immutable map，每幀由純函數推進，唯一的 side effect 在繪圖：
+The game state is one immutable map, advanced each frame by pure functions.
+The only side effect is drawing:
 
 ```clojure
-(defn tick  [state dt inputs] ...)  ; 純函數 → 新 state，可單元測試
-(defn draw! [ctx state]      ...)   ; 唯一的 side effect
+(defn tick  [state dt inputs] ...)  ; pure → new state, unit testable
+(defn draw! [ctx state]      ...)   ; the only side effect
 ```
 
-碰撞偵測初期用 O(n²) 全對全即可（n≈40 時僅 ~800 次比較/幀）——**不要提早最佳化**。
-避免在 render 迴圈中做 `str` / `pr-str` 等字串操作。
+All-pairs O(n²) collision detection is fine to start with (at n≈40 that is only
+~800 comparisons per frame) — **do not optimise prematurely**. Avoid string work
+such as `str` / `pr-str` inside the render loop.
 
-**亂數狀態放在 state 裡**（`:seed`，xorshift32）。需要亂數的行為——生成小行星、
-分裂、UFO 出場時機——都寫成 `(f seed ...) → [結果 新seed]`，`tick` 因此不必碰
-`js/Math.random` 就能保持純函數。`(initial-state seed)` 給定 seed 會完全重現同一場
-遊戲，測試靠這個。**不要在 `tick` 底下直接呼叫 `js/Math.random`。**
+**The RNG state lives in the state map** (`:seed`, xorshift32). Anything that
+needs randomness — spawning asteroids, splitting them, UFO entry timing — is
+written as `(f seed ...) → [result new-seed]`, which is what lets `tick` stay
+pure without ever touching `js/Math.random`. `(initial-state seed)` replays the
+same game exactly for a given seed, and the tests depend on that.
+**Never call `js/Math.random` anywhere under `tick`.**
 
-## 開發環境
+## Development environment
 
-- Temurin JDK 21.0.11（ClojureScript 編譯器需要 JVM）
+- Temurin JDK 21.0.11 (the ClojureScript compiler needs a JVM)
 - Node.js v24.18.0 / npm 11.16.0
 
-## 建置指令
+## Build commands
 
 ```bash
-npm install                    # 安裝依賴
-npx shadow-cljs watch app      # 開發模式 + hot reload → http://localhost:8080
-npm test                       # 在 node 上跑單元測試（shadow-cljs compile test）
-npx shadow-cljs release app    # 產出正式版到 public/js
+npm install                    # install dependencies
+npx shadow-cljs watch app      # dev mode + hot reload → http://localhost:8080
+npm test                       # unit tests under node (shadow-cljs compile test)
+npx shadow-cljs release app    # production build into public/js
 ```
 
-- 開發模式的 shadow-cljs 主控台在 http://localhost:9630
-- 產出物 `public/js/`、`out/` 不進版控；部署時（里程碑 7）才 release 後另行處理
-- **改到 `shadow-cljs.edn` 的 `:source-paths` 後要重啟 server**（`npx shadow-cljs stop`），
-  常駐的 server 不會重讀這個設定，症狀是測試明明寫了卻顯示 `Ran 0 tests`
+- The shadow-cljs dashboard runs at http://localhost:9630 in dev mode
+- Build output `public/js/` and `out/` are not version controlled; deployment
+  (milestone 7) will handle the release build separately
+- **Restart the server after changing `:source-paths` in `shadow-cljs.edn`**
+  (`npx shadow-cljs stop`). A long-running server does not re-read that setting,
+  and the symptom is tests that exist but report `Ran 0 tests`
 
-## 專案結構
+## Project layout
 
 ```
-public/index.html             頁面外殼與 canvas CSS（4:3 滿版）
-src/asteroids/game.cljs       純邏輯：常數、亂數、生成、tick、碰撞分裂
-src/asteroids/core.cljs       side effect：draw!、鍵盤、canvas、rAF 迴圈
-test/asteroids/game_test.cljs game 的單元測試
-shadow-cljs.edn               建置設定（:app → public、:test → node）
+public/index.html             page shell and canvas CSS (4:3, fills the window)
+src/asteroids/game.cljs       pure logic: constants, RNG, spawning, tick, collisions
+src/asteroids/core.cljs       side effects: draw!, keyboard, canvas, rAF loop
+test/asteroids/game_test.cljs unit tests for game
+shadow-cljs.edn               build config (:app → public, :test → node)
 ```
 
-**分層規則：`game` 不准碰任何瀏覽器 API**——沒有 `document`、沒有 canvas、沒有 atom，
-只有純函數。所以它能在 node 上直接測試。依賴方向是單向的 `core → game`，
-Clojure 不允許循環 require，新增功能時請維持這個方向。
+**Layering rule: `game` may not touch any browser API** — no `document`, no
+canvas, no atoms, only pure functions. That is what lets it be tested directly
+under node. The dependency direction is one-way, `core → game`; Clojure forbids
+circular requires, so keep that direction when adding features.
 
-- `game/tick`：`(tick state dt inputs)`，inputs 是動作關鍵字的 set
-- `core/draw!`：唯一的繪圖 side effect
-- `core/frame!`：rAF 迴圈，把 `@keys-down` 餵給 `tick`，再把結果交給 `draw!`
-- 遊戲座標固定為 1024×768 邏輯單位，`core/ensure-size!` 每幀把 canvas 緩衝區
-  對齊實際顯示尺寸並縮放 context，視窗大小與 devicePixelRatio 都不影響遊戲數值
-- `core` 的 `state` / `started?` 用 `defonce`，hot reload 時遊戲狀態與迴圈都不會重來
+- `game/tick`: `(tick state dt inputs)`, where inputs is a set of action keywords
+- `core/draw!`: the only drawing side effect
+- `core/frame!`: the rAF loop, feeding `@keys-down` to `tick` and the result to `draw!`
+- Game coordinates are fixed at 1024×768 logical units; `core/ensure-size!`
+  matches the canvas buffer to the displayed size each frame and scales the
+  context, so window size and devicePixelRatio never affect gameplay numbers
+- `core`'s `state` / `started?` are `defonce`, so neither the game state nor the
+  loop restarts on hot reload
 
-之後音效（里程碑 6）獨立成 `asteroids.sound`，繪圖若超過 150 行再拆 `asteroids.render`。
+Audio (milestone 6) will become its own `asteroids.sound`; if the drawing code
+passes ~150 lines, split out `asteroids.render`.
 
-## 測試
+## Tests
 
-`npm test` 跑 `test/asteroids/game_test.cljs`，node 上執行，不需要瀏覽器。
+`npm test` runs `test/asteroids/game_test.cljs` under node — no browser needed.
 
-寫測試靠 `(initial-state seed)` 的可重現性：固定 seed + 固定輸入序列 → 固定結果。
-測試裡的 `step` / `run` 以 60 fps 推進固定秒數，所以「按住右轉一秒剛好 200 度」
-這種手感規格可以直接寫成斷言。**改動 `game` 的行為時請一併更新或新增測試。**
+The tests lean on the reproducibility of `(initial-state seed)`: a fixed seed
+plus a fixed input sequence gives a fixed result. Their `step` / `run` helpers
+advance a fixed number of seconds at 60 fps, so a handling spec like "holding
+right for one second turns exactly 200 degrees" can be written directly as an
+assertion. **When changing behaviour in `game`, update or add tests with it.**
 
-## 手感參數（里程碑 2 使用者試玩定案，2026-07-29）
+## Handling parameters (settled by the user's playtest in milestone 2, 2026-07-29)
 
 ```clojure
-rotate-speed 200   ; 度/秒
-thrust       340   ; px/秒²
-drag         0.25  ; 每秒速度指數衰減係數
-max-speed    540   ; px/秒
+rotate-speed 200   ; degrees/second
+thrust       340   ; px/second²
+drag         0.25  ; per-second exponential velocity decay
+max-speed    540   ; px/second
 ```
 
-**未經使用者試玩不要調整這四個值。** 阻力用 `v *= exp(-drag·dt)` 而非每幀乘固定
-係數，手感才與幀率脫鉤。
+**Do not change these four values without a playtest by the user.** Drag uses
+`v *= exp(-drag·dt)` rather than a fixed per-frame multiplier, which is what
+decouples the handling from the frame rate.
 
-操作：`←` `→` 轉向、`↑` 推進（或 `A` / `D` / `W`）、`空白鍵` 開火／遊戲結束後重開。
+Controls: `←` `→` turn, `↑` thrust (or `A` / `D` / `W`), `space` to fire and to
+restart after game over.
 
-## 小行星（里程碑 3）
+## Asteroids (milestone 3)
 
-三級半徑 42 / 22 / 11，漂移速度隨級數遞增。外形是 12 個頂點、半徑各自在基準的
-0.72–1.12 之間抖動的多邊形，**生成時就把頂點座標算好存進 `:points`**，render 迴圈
-不再做三角函數。
+Three tiers with radii 42 / 22 / 11; drift speed rises as the tier gets smaller.
+The outline is a 12-vertex polygon whose vertex radii are each jittered between
+0.72 and 1.12 of the base radius. **The vertex coordinates are computed at spawn
+time and stored in `:points`**, so the render loop does no trigonometry.
 
-**小行星不自轉**——原版就是只有平移。若哪天想改成會轉，那是偏離原版的決定。
+**Asteroids do not rotate** — the original only translates them. Changing that
+would be a deliberate departure from the original.
 
-## 射擊與碰撞（里程碑 4）
+## Shooting and collisions (milestone 4)
 
-- 同時最多 4 發，**按一次打一發**（`:fire-held?` 記住上一幀狀態），按住不放不會連射
-- 子彈速度 620 px/秒、壽命 1.15 秒，**不加上飛船速度**：船開到極速 540 時幾乎追得上
-  自己的子彈。這是原版的怪癖，如果實際玩起來覺得不對，`fire-bullet` 裡加上
-  `(:vx ship)` / `(:vy ship)` 就是另一種版本
-- 碰撞用**圓形近似**（小行星基準半徑），不做多邊形內外判定
-- 距離用 `wrap-delta` 算環繞世界的最短距離，貼左緣和貼右緣的東西會正確地互相打到
-- 大 → 兩顆中 → 各兩顆小 → 消失，子彈與小行星同歸於盡
+- Four bullets on screen at most, and **one shot per press** (`:fire-held?`
+  remembers last frame); holding the key does not auto-fire
+- Bullet speed 620 px/s, life 1.15 s, and **the ship's velocity is not added**:
+  at the top speed of 540 you can very nearly catch your own shots. That is the
+  original's quirk; if it plays badly, adding `(:vx ship)` / `(:vy ship)` inside
+  `fire-bullet` gives the other variant
+- Collisions use a **circle approximation** (the asteroid's base radius), not a
+  point-in-polygon test
+- Distances go through `wrap-delta` for the shortest path in a wrapping world,
+  so something hugging the left edge correctly hits something hugging the right
+- Large → two medium → two small each → gone; bullet and asteroid destroy each other
 
-## 遊戲規則（里程碑 5）
+## Game rules (milestone 5)
 
-分數照原版：大 20、中 50、小 100，每 10000 分加一命。命數起始 3。
-關卡小行星數 4、6、8、10、上限 11（`asteroids-for-level`）。
+Scoring follows the original: large 20, medium 50, small 100, and an extra life
+every 10000 points. Lives start at 3. Asteroid counts per level are 4, 6, 8, 10,
+capped at 11 (`asteroids-for-level`).
 
-狀態機放在 `:phase`，各階段共用一個 `:timer` 倒數：
+The state machine lives in `:phase`, and every phase shares one `:timer`
+countdown:
 
-| phase | 意義 | 離開條件 |
+| phase | meaning | leaves when |
 |---|---|---|
-| `:playing` | 正常遊玩 | 撞到 → `:dead` / `:game-over`；場地清空 → `:next-level` |
-| `:dead` | 爆炸後的空白 | `:timer` 歸零**且**重生點淨空 |
-| `:next-level` | 過關停頓 | `:timer` 歸零 |
-| `:game-over` | 等待重開 | 按空白鍵 |
+| `:playing` | normal play | hit → `:dead` / `:game-over`; field cleared → `:next-level` |
+| `:dead` | the blank after an explosion | `:timer` reaches zero **and** the respawn point is clear |
+| `:next-level` | between-wave pause | `:timer` reaches zero |
+| `:game-over` | waiting for a restart | space is pressed |
 
-- `:dead` 與 `:game-over` 期間飛船不受控、不繪製、不能開火，但小行星與子彈照常前進
-- **重生要等中心淨空**（`respawn-clear-radius` 90px），否則一出場就被撞死
-- 每次出場（開局、重生、過關）都給 `invuln-time` 秒無敵，畫面上飛船每秒閃 4 次
-- 撞到小行星時**小行星不受影響**，只有飛船損失一命
-- `:fire-held?` 在 `tick` 的最後才更新，所以開火與重開遊戲看到的是同一個按鍵邊緣
+- During `:dead` and `:game-over` the ship is uncontrollable, undrawn and unable
+  to fire, while asteroids and bullets carry on as normal
+- **A respawn waits for a clear centre** (`respawn-clear-radius`, 90px),
+  otherwise the ship dies the moment it appears
+- Every appearance (new game, respawn, new level) grants `invuln-time` seconds
+  of invulnerability, shown as the ship blinking 4 times a second
+- Colliding with an asteroid **leaves the asteroid untouched**; only the ship
+  loses a life
+- `:fire-held?` is updated at the very end of `tick`, so firing and restarting
+  both see the same key edge
 
-HUD 直接畫在 canvas 上：分數左上、命數用小飛船圖示。分數的 `(str n)` 有快取，
-**只在分數改變時才做一次**，render 迴圈裡沒有字串操作。
+The HUD is drawn straight onto the canvas: score top left, lives as little ship
+icons. The score's `(str n)` is cached and **only recomputed when the score
+changes**, so the render loop does no string work.
 
-> 目前分數用 `fillText` 加等寬字型。原版是向量字型，想更貼近的話可以自寫
-> 數字筆畫，但那是獨立的一件事，不影響規則。
+> The score currently uses `fillText` with a monospace font. The original used a
+> vector font; hand-drawing the digit strokes would get closer, but that is a
+> separate piece of work and does not affect the rules.
 
+## Line endings
 
-## 換行符
+`core.autocrlf = false`. An external tool once rewrote LICENSE's line endings
+and made the whole file look changed. `.gitattributes` now fixes this with
+`* text=auto eol=lf`: LF both in version control and in the working tree, and
+anything a tool writes as CRLF is normalised back on commit.
 
-`core.autocrlf = false`，曾因外部工具改寫 LICENSE 換行符造成全檔假差異。
-已由 `.gitattributes` 的 `* text=auto eol=lf` 解決：版控內與工作目錄都是 LF，
-外部工具寫入 CRLF 也會在 commit 時被正規化回來。
+## Milestones
 
-## 里程碑
+One commit per milestone, and each one must show a visible result in the browser.
 
-每個里程碑一個 commit，都要能在瀏覽器中實際看到成果。
+- [x] 1. Scaffolding: shadow-cljs project + blank canvas + a moving white dot (proves the toolchain)
+- [x] 2. Ship: rotation, thrust, inertia, screen wrap ← the heart of the handling; needs the user to playtest and pick the values
+- [x] 3. Asteroids: polygon generation, drift, wrap
+- [x] 4. Shooting and collisions: bullet lifecycle, three-tier splitting
+- [x] 5. Game rules: score, lives, level progression, invulnerable respawn
+- [ ] 6. UFOs and audio: large and small saucer AI, heartbeat that speeds up with the level
+- [ ] 7. Deployment: `shadow-cljs release` + GitHub Pages
 
-- [x] 1. 鷹架：shadow-cljs 專案 + 空白 canvas + 會動的白點（驗證工具鏈）
-- [x] 2. 飛船：旋轉、推進、慣性、螢幕環繞 ← 手感核心，需使用者實際試玩調參數
-- [x] 3. 小行星：多邊形生成、漂移、環繞
-- [x] 4. 射擊與碰撞：子彈生命週期、三級分裂
-- [x] 5. 遊戲規則：分數、命數、關卡遞增、無敵重生
-- [ ] 6. UFO 與音效：大小飛碟 AI、心跳音效隨關卡加速
-- [ ] 7. 部署：`shadow-cljs release` + GitHub Pages
+## Working agreement
 
-## 協作方式
+- One commit per milestone, which keeps `git diff` and rollbacks easy
+- The milestone 2 handling parameters (thrust, rotation speed, drag) are decided
+  by the user after playing; do not settle them unilaterally
 
-- 每個里程碑一個 commit，方便 `git diff` 檢視與回退
-- 里程碑 2 的手感參數（推進力、旋轉速度、摩擦力）由使用者試玩後決定，不要自行定案
+## Notes
 
-## 注意事項
-
-- Asteroids 是 Atari 註冊商標。自寫 clone 放 GitHub 學習用沒問題，但不使用原版美術素材，不暗示與 Atari 有關聯。
+- Asteroids is a registered Atari trademark. A self-written clone on GitHub for
+  learning is fine, but use none of the original artwork and imply no
+  affiliation with Atari.

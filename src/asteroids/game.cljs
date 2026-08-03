@@ -1,65 +1,73 @@
 (ns asteroids.game
-  "遊戲的純邏輯：世界常數、亂數、生成、每幀推進、碰撞分裂。
+  "Pure game logic: world constants, RNG, spawning, per-frame stepping,
+   collisions and splitting.
 
-   這個 namespace 不碰任何瀏覽器 API——沒有 document、沒有 canvas、沒有 atom。
-   所有函數都是輸入決定輸出，所以能在 node 上直接跑測試。
-   會產生 side effect 的東西（繪圖、鍵盤、rAF 迴圈）都在 asteroids.core。")
+   This namespace touches no browser API — no document, no canvas, no atoms.
+   Every function's output is determined by its input, so it runs under node
+   in tests. Everything with a side effect (drawing, keyboard, the rAF loop)
+   lives in asteroids.core.")
 
-;; 遊戲一律用這組邏輯座標，畫布實際像素由 core/ensure-size! 換算，
-;; 所以視窗大小改變時遊戲數值完全不受影響。
+;; The game always uses these logical coordinates; core/ensure-size! maps them
+;; onto the canvas's real pixels, so resizing the window never changes any
+;; gameplay number.
 (def ^:const world-w 1024)
 (def ^:const world-h 768)
 
 (def ^:const tau (* 2 js/Math.PI))
 (def ^:const deg->rad (/ js/Math.PI 180))
 
-;; 手感參數，里程碑 2 由使用者試玩定案，不要隨意調整
-(def ^:const rotate-speed 200)   ; 度/秒
-(def ^:const thrust 340)         ; px/秒²
-(def ^:const drag 0.25)          ; 每秒速度指數衰減係數（0 = 完全無摩擦）
-(def ^:const max-speed 540)      ; px/秒
+;; Feel parameters, settled by the user's playtest in milestone 2. Do not tweak.
+(def ^:const rotate-speed 200)   ; degrees/second
+(def ^:const thrust 340)         ; px/second²
+(def ^:const drag 0.25)          ; per-second exponential velocity decay (0 = frictionless)
+(def ^:const max-speed 540)      ; px/second
 
-;; 機身在自己的座標系裡朝 +x，機鼻在前、機尾是個朝前凹的 V 字（原版造型）。
-;; ship-nose 同時也是子彈的出膛位置，繪圖那側也用同一組數字。
+;; In its own coordinate space the ship points along +x: nose in front, tail a
+;; V notched forward (the original's outline). ship-nose doubles as the bullet
+;; muzzle position, and the drawing side uses the same numbers.
 (def ^:const ship-nose 14)
 (def ^:const ship-tail -10)
 (def ^:const ship-half-width 9)
 (def ^:const ship-notch -5)
 
-;; 小行星三級，半徑與漂移速度區間（px/秒）
+;; The three asteroid tiers: base radius and drift speed range (px/second).
 (def asteroid-radius {:large 42 :medium 22 :small 11})
 (def asteroid-speed  {:large [18 46] :medium [30 78] :small [50 118]})
 (def next-size {:large :medium, :medium :small, :small nil})
 (def ^:const asteroid-verts 12)
-(def ^:const jitter-min 0.72)    ; 頂點半徑相對基準半徑的抖動範圍，決定稜角有多亂
-(def ^:const jitter-max 1.12)
+(def ^:const jitter-min 0.72)    ; vertex radius jitter around the base radius,
+(def ^:const jitter-max 1.12)    ; i.e. how jagged the outline gets
 (def ^:const level-1-asteroids 4)
 
-;; 子彈。原版同時最多 4 發，且射速固定不加上飛船速度——所以船開到極速時
-;; 幾乎追得上自己的子彈，這個怪癖是原版手感的一部分。
-(def ^:const bullet-speed 620)   ; px/秒
-(def ^:const bullet-life 1.15)   ; 秒，約可飛過畫面七成寬
+;; Bullets. The original allows 4 on screen at once, and their speed is fixed
+;; rather than added to the ship's — so at top speed you can very nearly catch
+;; up with your own shots. That quirk is part of how the original feels.
+(def ^:const bullet-speed 620)   ; px/second
+(def ^:const bullet-life 1.15)   ; seconds, roughly 70% of the screen width
 (def ^:const max-bullets 4)
 
-;; 遊戲規則。分數與加命門檻照原版。
+;; Rules. Scores and the extra-life threshold follow the original.
 (def score-for {:large 20, :medium 50, :small 100})
 (def ^:const start-lives 3)
 (def ^:const extra-life-every 10000)
-(def ^:const ship-radius 11)              ; 撞擊判定用的圓，比機身略小一點才不會覺得冤枉
-(def ^:const respawn-delay 2.0)           ; 秒，爆炸到重生之間的空白
-(def ^:const invuln-time 3.0)             ; 秒，出場後的無敵時間
-(def ^:const respawn-clear-radius 90)     ; 重生點周圍要淨空到這個半徑才會放人出來
-(def ^:const level-pause 1.5)             ; 秒，清空到下一波之間的停頓
-(def ^:const level-asteroid-step 2)       ; 每關多兩顆
-(def ^:const max-level-asteroids 11)      ; 原版的上限
+(def ^:const ship-radius 11)              ; collision circle, a little smaller than
+                                          ; the hull so deaths never feel unfair
+(def ^:const respawn-delay 2.0)           ; seconds of blank between death and respawn
+(def ^:const invuln-time 3.0)             ; seconds of invulnerability after appearing
+(def ^:const respawn-clear-radius 90)     ; the respawn point must be clear this far out
+(def ^:const level-pause 1.5)             ; seconds between a cleared field and the next wave
+(def ^:const level-asteroid-step 2)       ; two more asteroids per level
+(def ^:const max-level-asteroids 11)      ; the original's cap
 
 (defn asteroids-for-level [level]
   (min max-level-asteroids
        (+ level-1-asteroids (* level-asteroid-step (dec level)))))
 
-;; --- 亂數 -------------------------------------------------------------------
-;; 亂數狀態（seed）放在遊戲 state 裡跟著走，這樣連「分裂出新小行星」這種需要
-;; 亂數的行為都能留在純函數裡，同一個 seed 必定跑出同一場遊戲，方便測試。
+;; --- Randomness -------------------------------------------------------------
+;; The RNG state (seed) travels inside the game state. That keeps even
+;; randomness-dependent behaviour — such as splitting an asteroid — inside pure
+;; functions, and it means one seed always replays the same game, which is what
+;; the tests rely on.
 
 (defn- xorshift32 [s]
   (let [s (bit-xor s (bit-shift-left s 13))
@@ -68,7 +76,7 @@
     s))
 
 (defn rand-n
-  "從 seed 抽 n 個 [0,1) 亂數，回傳 [亂數向量 新seed]。"
+  "Draw n numbers in [0,1) from seed. Returns [numbers new-seed]."
   [seed n]
   (loop [s seed, i 0, acc (transient [])]
     (if (< i n)
@@ -79,11 +87,13 @@
 
 (defn- lerp [a b t] (+ a (* t (- b a))))
 
-;; --- 生成 -------------------------------------------------------------------
+;; --- Spawning ---------------------------------------------------------------
 
 (defn make-asteroid
-  "生一顆小行星：隨機方向、該級距內的隨機速度，外形是頂點半徑各自抖動過的多邊形。
-   小行星不自轉（原版就是這樣），所以頂點座標在這裡算好，render 迴圈不必再做三角函數。"
+  "Create one asteroid: random heading, random speed within its tier, and an
+   outline whose vertex radii are each jittered around the base radius.
+   Asteroids do not rotate (the original's behaviour), so the vertex coordinates
+   are computed once here and the render loop never needs trigonometry."
   [seed size x y]
   (let [[rs seed]     (rand-n seed (+ 2 asteroid-verts))
         dir           (* tau (nth rs 0))
@@ -105,14 +115,15 @@
      seed]))
 
 (defn- edge-point
-  "沿著畫面四邊挑一點——新的一波從邊緣進場，不會直接壓在飛船頭上。"
+  "Pick a point along the four screen edges — a new wave enters from the border
+   instead of materialising on top of the ship."
   [r1 r2]
   (if (< r1 0.5)
     [(* r2 world-w) (if (< r1 0.25) 0.0 (double world-h))]
     [(if (< r1 0.75) 0.0 (double world-w)) (* r2 world-h)]))
 
 (defn spawn-wave
-  "在邊緣放 n 顆大隕石，回傳 [小行星向量 新seed]。"
+  "Place n large asteroids along the edges. Returns [asteroids new-seed]."
   [seed n]
   (loop [i 0, seed seed, acc []]
     (if (< i n)
@@ -127,34 +138,37 @@
    :y     (/ world-h 2)
    :vx    0.0
    :vy    0.0
-   ;; 螢幕座標 y 向下，所以 -π/2 是朝正上方
+   ;; Screen y grows downward, so -π/2 points straight up.
    :angle (- (/ js/Math.PI 2))})
 
 (defn initial-state
-  "不給 seed 就用時間當種子；給 seed 則整場遊戲完全重現，測試用。"
-  ([] (initial-state (bit-or (js/Date.now) 1)))   ; bit-or 1：截成 32 位元且保證非零
+  "Without a seed, the clock provides one; with a seed the whole game replays
+   identically, which is how the tests work."
+  ([] (initial-state (bit-or (js/Date.now) 1)))   ; bit-or 1: truncate to 32 bits, never zero
   ([seed]
    (let [[asteroids seed] (spawn-wave seed (asteroids-for-level 1))]
      {:ship            (initial-ship)
       :asteroids       asteroids
       :bullets         []
-      ;; 射擊是按一次打一發，不是按著不放連射，所以要記上一幀有沒有按著
+      ;; One shot per press rather than auto-fire, so we remember whether the
+      ;; key was already down last frame.
       :fire-held?      false
       :score           0
       :lives           start-lives
       :level           1
       :next-extra-life extra-life-every
-      ;; :playing 正常遊玩／:dead 等待重生／:next-level 過關停頓／:game-over 等待重開
+      ;; :playing normal play / :dead awaiting respawn /
+      ;; :next-level between-wave pause / :game-over awaiting restart
       :phase           :playing
-      :timer           0.0        ; 目前階段的倒數，各階段共用這一個欄位
+      :timer           0.0        ; countdown for the current phase; all phases share it
       :invuln          invuln-time
       :seed            seed
       :t               0.0})))
 
-;; --- 推進一幀 ---------------------------------------------------------------
+;; --- Stepping one frame -----------------------------------------------------
 
 (defn wrap
-  "螢幕環繞：超出邊界就從另一側出現。"
+  "Screen wrap: leave one edge, come back on the opposite one."
   [v limit]
   (cond
     (< v 0)     (+ v limit)
@@ -169,15 +183,17 @@
     :else                                0.0))
 
 (defn update-ship
-  "旋轉 → 推進 → 阻力 → 限速 → 位移環繞。"
+  "Rotate → thrust → drag → clamp speed → move and wrap."
   [ship dt inputs]
   (let [angle      (+ (:angle ship)
                       (* (turn-dir inputs) rotate-speed deg->rad dt))
         thrusting? (boolean (inputs :thrust))
-        ;; 推進沿著機鼻方向加速；放開後速度不歸零，只被阻力慢慢吃掉 = 慣性
+        ;; Thrust accelerates along the nose; releasing it does not zero the
+        ;; velocity, drag merely eats away at it — that is the inertia.
         ax         (if thrusting? (* thrust (js/Math.cos angle)) 0.0)
         ay         (if thrusting? (* thrust (js/Math.sin angle)) 0.0)
-        ;; 指數衰減與幀率無關，dt 抖動不會讓手感跟著抖
+        ;; Exponential decay is frame-rate independent, so a jittery dt does not
+        ;; make the handling jittery too.
         decay      (js/Math.exp (- (* drag dt)))
         vx         (* (+ (:vx ship) (* ax dt)) decay)
         vy         (* (+ (:vy ship) (* ay dt)) decay)
@@ -194,21 +210,22 @@
            :y          (wrap (+ (:y ship) (* vy dt)) world-h))))
 
 (defn drift
-  "小行星只有等速漂移加環繞，沒有加速度也不自轉。"
+  "Asteroids only translate and wrap — no acceleration, and no spin."
   [{:keys [x y vx vy] :as a} dt]
   (assoc a
          :x (wrap (+ x (* vx dt)) world-w)
          :y (wrap (+ y (* vy dt)) world-h)))
 
 (defn playing?
-  "只有 :playing 階段飛船才受控、才會被撞、才能開火。"
+  "Only during :playing is the ship controllable, collidable and able to fire."
   [state]
   (= :playing (:phase state)))
 
-;; --- 子彈 -------------------------------------------------------------------
+;; --- Bullets ----------------------------------------------------------------
 
 (defn- advance-bullets
-  "子彈跟著漂移環繞，壽命到了就消失——這是唯一會讓子彈消失的自然原因。"
+  "Bullets drift and wrap, and vanish when their life runs out — the only way a
+   bullet disappears on its own."
   [bullets dt]
   (into []
         (comp (map (fn [b]
@@ -231,8 +248,9 @@
              :life bullet-life})))
 
 (defn- fire-edge?
-  "這幀按下、上一幀沒按——按住不放不會連射。
-   :fire-held? 在 tick 的最後才更新，所以同一幀裡開火與重開遊戲看到的是同一個邊緣。"
+  "Down this frame, up last frame — holding the key does not auto-fire.
+   :fire-held? is only updated at the very end of tick, so firing and
+   restarting the game both see the same key edge within one frame."
   [state inputs]
   (and (boolean (inputs :fire)) (not (:fire-held? state))))
 
@@ -243,10 +261,11 @@
     (fire-bullet state)
     state))
 
-;; --- 碰撞與分裂 --------------------------------------------------------------
+;; --- Collisions and splitting -----------------------------------------------
 
 (defn- wrap-delta
-  "環繞世界裡兩點的最短距離分量：畫面兩側是相連的，貼著左緣和貼著右緣其實很近。"
+  "One axis of the shortest distance in a wrapping world: the two sides of the
+   screen are adjacent, so hugging the left edge is close to hugging the right."
   [d limit]
   (let [half (/ limit 2)]
     (cond
@@ -255,8 +274,9 @@
       :else          d)))
 
 (defn- hit?
-  "子彈中心落在小行星基準半徑內就算打中。外形是不規則多邊形，但用圓形近似
-   在這個尺寸下玩起來沒有違和，也省下多邊形內外判定。"
+  "A hit is the bullet's centre falling within the asteroid's base radius. The
+   outline is an irregular polygon, but a circle reads fine at this size and
+   saves a point-in-polygon test."
   [b a]
   (let [r  (asteroid-radius (:size a))
         dx (wrap-delta (- (:x a) (:x b)) world-w)
@@ -271,7 +291,8 @@
         (recur (inc i))))))
 
 (defn- split
-  "被打中的小行星裂成兩顆小一級的，方向各自重抽；最小級直接消失。"
+  "A struck asteroid breaks into two of the next size down, each with a freshly
+   drawn heading; the smallest tier simply disappears."
   [seed a]
   (if-let [child (next-size (:size a))]
     (let [[c1 seed] (make-asteroid seed child (:x a) (:y a))
@@ -280,8 +301,9 @@
     [[] seed]))
 
 (defn- award-extra-life
-  "每累積 extra-life-every 分加一命。單幀最多 4 發子彈、至多幾百分，
-   不可能一次跨過兩個門檻，所以判斷一次就夠。"
+  "One extra life per extra-life-every points. A single frame fires at most 4
+   bullets and so scores a few hundred points at most — it can never cross two
+   thresholds at once, so checking once is enough."
   [state]
   (if (>= (:score state) (:next-extra-life state))
     (-> state
@@ -293,7 +315,7 @@
   (let [[survivors-b hit]
         (reduce (fn [[bs hit] b]
                   (if-let [i (first-hit-index b asteroids hit)]
-                    [bs (conj hit i)]          ; 子彈與小行星同歸於盡
+                    [bs (conj hit i)]          ; bullet and asteroid destroy each other
                     [(conj bs b) hit]))
                 [[] #{}]
                 bullets)]
@@ -314,10 +336,10 @@
             (update :score + gained)
             (award-extra-life))))))
 
-;; --- 命數、關卡、階段 --------------------------------------------------------
+;; --- Lives, levels and phases -----------------------------------------------
 
 (defn- within?
-  "兩點在環繞世界裡的距離小於 r？"
+  "Are the two points closer than r in the wrapping world?"
   [x1 y1 x2 y2 r]
   (let [dx (wrap-delta (- x2 x1) world-w)
         dy (wrap-delta (- y2 y1) world-h)]
@@ -331,7 +353,8 @@
          asteroids)))
 
 (defn- ship-collision
-  "撞上小行星就少一命。小行星不受影響——重生點淨空檢查會處理『原地又被撞死』。"
+  "Hitting an asteroid costs a life. The asteroid is left alone — the
+   clear-respawn-point check is what prevents dying again on the spot."
   [state]
   (if (and (playing? state)
            (zero? (:invuln state))
@@ -349,7 +372,8 @@
     state))
 
 (defn- respawn-clear?
-  "重生點周圍夠空曠了嗎？沒淨空就繼續等，避免一出場就撞死。"
+  "Is the respawn point empty enough? If not we keep waiting, so the ship never
+   materialises straight into a rock."
   [asteroids]
   (let [cx (/ world-w 2)
         cy (/ world-h 2)]
@@ -385,7 +409,7 @@
     state))
 
 (defn tick
-  "推進一幀。inputs 是動作關鍵字的 set，例如 #{:left :thrust :fire}。"
+  "Advance one frame. inputs is a set of action keywords, e.g. #{:left :thrust :fire}."
   [state dt inputs]
   (-> state
       (update :t + dt)
@@ -399,5 +423,5 @@
       (ship-collision)
       (check-level-clear)
       (advance-phase inputs)
-      ;; 最後才記下按鍵狀態，前面所有邊緣偵測看到的才會是同一幀的判斷
+      ;; Record the key state last, so every edge test above saw the same frame.
       (assoc :fire-held? (boolean (inputs :fire)))))
