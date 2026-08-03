@@ -208,6 +208,13 @@ UFO behaviour:
 - 200 points for the large saucer, 1000 for the small one
 - A saucer dies on contact with an asteroid or the ship, and a level will not end
   while one is still on screen
+- **Obstacle avoidance is a coin flip per encounter, not per scan.** When a rock
+  enters the lane ahead (`threat-ahead`), the saucer rolls once against
+  `ufo-dodge-chance` and remembers the answer in `:dodge?` until the rock is out
+  of the way. Re-rolling on every 0.2 s scan would push the effective dodge rate
+  towards 1 for any saucer that lives long enough, which would make the
+  probability meaningless. If you change the scan interval, this is why the
+  decision is cached
 
 The heartbeat interval shrinks with the level and with time spent on it
 (`beat-interval`), bottoming out at `beat-interval-min`. `:level-t` resets each

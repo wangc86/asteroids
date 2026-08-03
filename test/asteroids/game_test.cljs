@@ -380,7 +380,9 @@
                      :vx (game/ufo-speed kind) :vy 0.0
                      :size kind
                      :fire-timer (game/ufo-fire-interval kind)
-                     :turn-timer game/ufo-turn-interval}))
+                     :turn-timer game/ufo-turn-interval
+                     :scan-timer 0.0
+                     :dodge? nil}))
 
 (deftest a-saucer-eventually-arrives
   (let [s (-> (open-space (game/initial-state 5))
@@ -500,6 +502,68 @@
     (is (= :playing (:phase held))))
   (let [ended (-> (world-with []) (step no-input))]
     (is (= :next-level (:phase ended)))))
+
+;; --- Obstacle avoidance -----------------------------------------------------
+
+(defn- head-on
+  "A saucer at (270, 384) flying right into a rock parked at (500, 384): close
+   enough to be seen at once, far enough that a dodge has time to work."
+  [kind decision]
+  (-> (world-with [(still-asteroid :large 500 384)])
+      (with-ufo kind 270 384)
+      (assoc-in [:ufo :dodge?] decision)))
+
+(deftest a-committed-dodge-clears-the-rock
+  (let [s (run (head-on :large true) 3.5 no-input)]
+    (is (some? (:ufo s)) "it survived the encounter")
+    (is (not (close? (:y (:ufo s)) 384 40)) "by getting out of the lane")
+    (is (> (:x (:ufo s)) 500) "and carried on past the rock")))
+
+(deftest a-saucer-that-does-not-bother-is-destroyed
+  (let [events (events-during (head-on :large false) 3.5 no-input)
+        s      (run (head-on :large false) 3.5 no-input)]
+    (is (nil? (:ufo s)))
+    (is (some #{:bang-ufo} events))))
+
+(deftest the-dodge-decision-is-taken-once-per-encounter
+  (let [encounter (-> (world-with [(still-asteroid :large 500 384)])
+                      (with-ufo :large 270 384)
+                      (step no-input))]
+    (is (some? (:dodge? (:ufo encounter))) "meeting a rock forces a decision"))
+  (let [clear (-> (world-with [(still-asteroid :large 500 100)])   ; well out of the lane
+                  (with-ufo :large 270 384)
+                  (step no-input))]
+    (is (nil? (:dodge? (:ufo clear))) "no rock in the way, no decision to make"))
+  ;; Once decided, the answer sticks: a saucer that declined does not quietly
+  ;; change its mind on the next scan and save itself.
+  ;; 0.8 s in, it is still short of the rock but well past several scans.
+  (let [stubborn (run (head-on :large false) 0.8 no-input)]
+    (is (some? (:ufo stubborn)) "not dead yet")
+    (is (false? (:dodge? (:ufo stubborn))))))
+
+(deftest dodging-happens-at-roughly-the-configured-rate
+  (letfn [(dodges [kind]
+            (count
+             (filter (fn [i]
+                       (-> (world-with [(still-asteroid :large 500 384)])
+                           (with-ufo kind 270 384)
+                           (assoc :seed (bit-or 1 (* i 2654435761)))
+                           (step no-input)
+                           (get-in [:ufo :dodge?])))
+                     (range 400))))]
+    (let [large (/ (dodges :large) 400.0)
+          small (/ (dodges :small) 400.0)]
+      (is (close? large (:large game/ufo-dodge-chance) 0.12)
+          "the large saucer dodges about as often as configured")
+      (is (close? small (:small game/ufo-dodge-chance) 0.12)
+          "and so does the small one")
+      (is (> small large) "the small saucer is the better pilot"))))
+
+(deftest a-rock-outside-the-lane-is-ignored
+  (let [s (-> (world-with [(still-asteroid :large 500 384)])
+              (with-ufo :large 700 384)          ; already past it, flying away
+              (step no-input))]
+    (is (nil? (:dodge? (:ufo s))) "nothing behind us is a threat")))
 
 ;; --- Heartbeat --------------------------------------------------------------
 
