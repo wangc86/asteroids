@@ -18,7 +18,12 @@ running on an HTML5 canvas.
 | Game loop | `requestAnimationFrame` + delta time | |
 | Input | `keydown`/`keyup` into a set | avoids the OS key-repeat delay |
 | Audio | Web Audio API, synthesised in code | the original's heartbeat and thruster noise need no audio files |
-| Scope | **faithful remake of the original** | three asteroid tiers, large and small UFOs, hyperspace, heartbeat audio, level progression |
+| Scope | **follow the original closely** | three asteroid tiers, large and small UFOs, hyperspace, heartbeat audio, level progression |
+
+Follow the original by default, and **write down every departure from it** (see
+"Departures from the original" below). "It plays better this way" is a fine
+reason to deviate; leaving the deviation undocumented is not, because the next
+person cannot tell a deliberate change from a bug.
 
 ## Core architecture
 
@@ -56,11 +61,33 @@ npx shadow-cljs release app    # production build into public/js
 ```
 
 - The shadow-cljs dashboard runs at http://localhost:9630 in dev mode
-- Build output `public/js/` and `out/` are not version controlled; deployment
-  (milestone 7) will handle the release build separately
+- Build output `public/js/` and `out/` are not version controlled; CI builds
+  them (see Deployment below)
 - **Restart the server after changing `:source-paths` in `shadow-cljs.edn`**
   (`npx shadow-cljs stop`). A long-running server does not re-read that setting,
   and the symptom is tests that exist but report `Ran 0 tests`
+- To check a release build locally, stop the watcher first — it would overwrite
+  `public/js` with a dev build. `npx shadow-cljs stop`, then
+  `npx shadow-cljs release app`, then `npx shadow-cljs server` to serve
+  `public/` as static files
+
+## Deployment (milestone 7)
+
+`.github/workflows/deploy.yml` builds and publishes to GitHub Pages on every
+push to `main`. **`npm test` runs first and a red suite blocks the deploy.**
+
+Because build output is not committed, Pages is built in CI rather than served
+from a branch, so the repository's Pages source must be set to **GitHub Actions**
+(Settings → Pages). Serving from a branch would not work without committing
+`public/js`.
+
+- The site is served from a sub-path (`/asteroids/`), so every asset reference
+  must stay relative. `index.html` uses `js/main.js` and `shadow-cljs.edn` uses
+  `:asset-path "js"` — **do not make either absolute**
+- `public/.nojekyll` is there so Pages never runs the artifact through Jekyll
+- The release build is one self-contained `main.js` under advanced optimisation.
+  Namespaces are munged, so `asteroids.game` and friends are not reachable from
+  the console the way they are in dev
 
 ## Project layout
 
@@ -251,6 +278,18 @@ level. It plays during `:playing` and `:dead` but stops at `:game-over`.
 > me, not from measurements of the original, and have not been playtested. They
 > are the most likely thing in this milestone to need adjusting.
 
+## Departures from the original
+
+Keep this list current. Anything here is a decision, not a defect.
+
+| Departure | Why |
+|---|---|
+| **Saucers avoid asteroids** | Requested. The arcade saucer flies on regardless and gets smashed by rocks. This is the biggest behavioural change: it makes saucers harder to be rid of, since you now have to shoot them yourself |
+| **Asteroid outlines are generated** | The original reused a few hand-drawn shapes at three scales; `make-asteroid` builds a fresh 12-vertex polygon per rock |
+| **Objects are mirrored across screen edges** | The original popped an object to the far side when its centre crossed. Mirroring makes a radius-42 rock look like it slides across rather than teleporting. Physics is unchanged — still centre-based wrap |
+| **The score uses `fillText`** | The original drew digits as vector strokes. Hand-drawn digit strokes would match, but that is separate work |
+| **No hyperspace** | Listed in the scope above but never built, and no milestone covered it. Still open |
+
 ## Line endings
 
 `core.autocrlf = false`. An external tool once rewrote LICENSE's line endings
@@ -268,7 +307,7 @@ One commit per milestone, and each one must show a visible result in the browser
 - [x] 4. Shooting and collisions: bullet lifecycle, three-tier splitting
 - [x] 5. Game rules: score, lives, level progression, invulnerable respawn
 - [x] 6. UFOs and audio: large and small saucer AI, heartbeat that speeds up with the level
-- [ ] 7. Deployment: `shadow-cljs release` + GitHub Pages
+- [x] 7. Deployment: `shadow-cljs release` + GitHub Pages
 
 ## Working agreement
 

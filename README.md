@@ -1,7 +1,7 @@
 # Asteroids
 
-A faithful remake of Atari's *Asteroids* (1979), written in ClojureScript and
-rendered with an HTML5 canvas.
+A remake of Atari's *Asteroids* (1979), written in ClojureScript and rendered
+with an HTML5 canvas.
 
 The original ran on a vector display, so the whole game is line art: a triangular
 ship, jagged rocks, and single-pixel shots on a black field. This remake keeps
@@ -9,7 +9,14 @@ that, along with the parts of the original that people remember — three tiers 
 asteroid that split when you shoot them, momentum that never quite lets go, and
 a screen that wraps around on every edge.
 
+It follows the original closely on rules and handling, but it is not a
+reproduction of it. Where it differs, it says so below.
+
 ## Play
+
+**<https://wangc86.github.io/asteroids/>**
+
+Or run it locally:
 
 ```bash
 npm install
@@ -35,28 +42,43 @@ more accurate the higher your score. Past 40,000 points the large one stops
 showing up altogether. Their shots break asteroids too, though you get no credit
 for the rocks they clear.
 
-Saucers fly the original's zig-zag — straight legs, sharp turns — and they are
-decent pilots within that constraint. They predict collisions from relative
-motion and pick whichever of climb, level or dive leaves the most room, so they
-will usually thread a crowded field rather than blunder into it. Usually: a
-saucer that can only turn three ways sometimes has nowhere good to go, and once
-in a while one turns out not to be a pilot at all.
+Saucers fly the original's zig-zag — straight legs, sharp turns.
 
 Every sound is synthesised in code — there are no audio files. Browsers will not
 start audio without a user gesture, so the first key you press is what switches
 it on.
 
-Two details are deliberately faithful rather than modernised. Shots travel at a
-fixed speed and do **not** inherit the ship's velocity, so at full throttle you
-can very nearly catch up with your own bullets. And firing is one shot per press
-— holding the key down does not auto-fire.
+## Where this differs from the original
+
+**Saucers avoid asteroids.** In the arcade game they fly on regardless and get
+smashed by rocks like anything else. Here they look ahead, predict collisions
+from relative motion, and pick whichever of climb, level or dive leaves the most
+room — so they usually thread a crowded field instead of blundering into it.
+They still only turn three ways, so sometimes there is nowhere good to go, and
+once in a while a saucer turns out not to be a pilot at all. This is the largest
+deliberate change, and it makes saucers meaningfully harder to be rid of.
+
+**Asteroid outlines are generated, not drawn.** The original had a handful of
+hand-drawn rock shapes reused at three scales; here each rock is a fresh
+12-vertex polygon with jittered radii, so no two are alike.
+
+**No hyperspace.** The original's panic button — vanish and reappear somewhere
+random, possibly on top of a rock — is not implemented.
+
+**The score uses a normal monospace font**, where the original drew its digits
+as vector strokes like everything else.
+
+Two details are kept the way the original had them, rather than modernised.
+Shots travel at a fixed speed and do **not** inherit the ship's velocity, so at
+full throttle you can very nearly catch up with your own bullets. And firing is
+one shot per press — holding the key down does not auto-fire.
 
 ## Status
 
-Milestones 1–6 are done: ship handling, asteroids, shooting and splitting,
+Complete and deployed: ship handling, asteroids, shooting and splitting,
 scoring, lives, level progression, invulnerable respawns, both saucers, and the
 synthesised sound including the heartbeat that speeds up as a level wears on.
-A deployed build is what remains.
+Hyperspace is the one part of the original still missing.
 
 ## How it is built
 
@@ -124,9 +146,13 @@ losing your current run. The shadow-cljs dashboard is at
 Requirements: a JVM for the ClojureScript compiler, plus Node.js. Developed
 against Temurin JDK 21.0.11 and Node.js v24.
 
+Pushing to `main` builds and publishes to GitHub Pages via
+`.github/workflows/deploy.yml`. The tests run first, so a red suite never
+reaches the site. Build output is not committed — CI produces it.
+
 `CLAUDE.md` holds the longer engineering notes — why each parameter has the
-value it does, which behaviours are deliberate quirks of the original, and what
-not to change without playtesting.
+value it does, which behaviours are deliberate departures from the original, and
+what not to change without playtesting.
 
 ## License
 
