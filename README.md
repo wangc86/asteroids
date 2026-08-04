@@ -35,10 +35,12 @@ more accurate the higher your score. Past 40,000 points the large one stops
 showing up altogether. Their shots break asteroids too, though you get no credit
 for the rocks they clear.
 
-Saucers are good pilots. They predict collisions from relative motion and steer
-clear, re-deciding every frame, so they will thread a crowded field rather than
-blunder into it — you have to shoot them down yourself. Very occasionally one
-turns out not to be a pilot at all and flies straight into a rock.
+Saucers fly the original's zig-zag — straight legs, sharp turns — and they are
+decent pilots within that constraint. They predict collisions from relative
+motion and pick whichever of climb, level or dive leaves the most room, so they
+will usually thread a crowded field rather than blunder into it. Usually: a
+saucer that can only turn three ways sometimes has nowhere good to go, and once
+in a while one turns out not to be a pilot at all.
 
 Every sound is synthesised in code — there are no audio files. Browsers will not
 start audio without a user gesture, so the first key you press is what switches

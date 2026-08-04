@@ -381,6 +381,7 @@
                      :size kind
                      :fire-timer (game/ufo-fire-interval kind)
                      :turn-timer game/ufo-turn-interval
+                     :hold-timer 0.0
                      :dodge? nil}))
 
 (deftest a-saucer-eventually-arrives
@@ -573,6 +574,36 @@
       (is (close? small (:small game/ufo-dodge-chance) 0.02))
       (is (>= small large) "the small saucer is the better pilot"))))
 
+(deftest saucers-fly-straight-legs-at-three-slopes
+  ;; The look matters more than the success rate here: the original's saucer
+  ;; flies a Z, not a smooth curve. So every heading must be climb, level or
+  ;; dive at one fixed speed, and each leg must last long enough to read as a
+  ;; straight line.
+  (let [[rocks seed] (game/spawn-wave 4242 (game/asteroids-for-level 5))
+        s            (* (game/ufo-speed :large) game/ufo-vertical-ratio)
+        ;; let the field drift, then arrive through the game's own spawn logic
+        start        (-> (world-with rocks)
+                         (assoc :seed seed :invuln 9999.0 :ufo-timer 9999.0)
+                         (run 5 no-input)
+                         (assoc :ufo-timer 0.0)
+                         (step no-input)
+                         (assoc :ufo-timer 9999.0)
+                         (assoc-in [:ufo :dodge?] true)
+                         (assoc-in [:ufo :fire-timer] 9999.0))
+        vys          (second
+                      (reduce (fn [[st acc] _]
+                                (let [st (step st no-input)]
+                                  [st (if-let [u (:ufo st)] (conj acc (:vy u)) acc)]))
+                              [start []]
+                              (range (js/Math.round (* 60 8)))))
+        legs         (count (partition-by identity vys))]
+    (is (< 100 (count vys)) "the saucer stayed up long enough to judge")
+    (is (every? (fn [vy] (some #(close? vy % 1e-9) [(- s) 0.0 s])) vys)
+        "every heading is climb, level or dive — no intermediate angles")
+    (is (< legs 24)
+        (str "over 8 seconds the path should be a handful of straight legs, not "
+             "a wobble; got " legs))))
+
 (deftest a-saucer-picks-a-clear-entry-height
   ;; Asteroids enter from the edges too, which is exactly where a saucer appears,
   ;; so arriving at a random height would sometimes mean arriving inside a rock.
@@ -591,11 +622,16 @@
                   wall)
         "it came in through the gap, not on top of a rock")))
 
-(deftest a-saucer-crosses-a-crowded-field-without-hitting-anything
+(deftest a-saucer-usually-crosses-a-crowded-field
   ;; The requirement is not "does it swerve" but "does it get across alive".
   ;; Full-width crossings of a drifting level-5 field, entering through the
   ;; game's own spawn logic, with the pilot decision forced so this measures the
   ;; flying rather than the dice.
+  ;;
+  ;; Restricting evasion to three headings held for a fixed time — which is what
+  ;; keeps the flight path a Z — costs roughly 5-7% of crossings, deliberately.
+  ;; The bound here is loose enough not to be flaky and tight enough to catch a
+  ;; real regression: before avoidance existed, most crossings ended in a rock.
   (let [trials 40
         deaths (count
                 (filter (fn [i]
@@ -612,9 +648,9 @@
                                       (assoc-in [:ufo :fire-timer] 9999.0)
                                       (events-during 13 no-input)))))
                         (range trials)))]
-    (is (zero? deaths)
-        (str "a competent saucer should not fly into a rock at all; "
-             deaths " of " trials " did"))))
+    (is (<= deaths 8)
+        (str "a competent saucer should get across the great majority of the "
+             "time; " deaths " of " trials " flew into a rock"))))
 
 ;; --- Heartbeat --------------------------------------------------------------
 

@@ -82,12 +82,13 @@
 ;; pilot at all — rolled once, the first time it meets a rock, and kept for life.
 (def ufo-dodge-chance {:large 0.97 :small 0.995})
 (def ^:const ufo-evade-horizon 3.5)       ; seconds of lookahead
-(def ^:const ufo-evade-ratio 0.9)         ; vertical speed while evading, vs horizontal
 (def ^:const ufo-clearance 34)            ; px hull-to-hull below which we call it a threat
-(def ufo-evade-options                    ; fractions of the evade speed
-  [-1.0 -0.85 -0.7 -0.55 -0.4 -0.2 0.0 0.2 0.4 0.55 0.7 0.85 1.0])
+;; Up, level, down and nothing in between, at the same vertical speed as the
+;; aimless zig-zag: every leg of the flight path has one of three slopes, which
+;; is what keeps it looking like the original's Z rather than a smooth curve.
+(def ufo-evade-options [-1.0 0.0 1.0])
+(def ^:const ufo-evade-hold 0.45)         ; seconds a heading is held before rethinking
 (def ^:const ufo-entry-tries 8)           ; entry heights considered when arriving
-
 (def ^:const ufo-delay-min 9.0)           ; seconds between saucers at level 1
 (def ^:const ufo-delay-max 20.0)
 (def ^:const ufo-delay-per-level 1.2)     ; each level shortens the wait
@@ -454,6 +455,7 @@
                     :size       kind
                     :fire-timer (ufo-fire-interval kind)
                     :turn-timer ufo-turn-interval
+                    :hold-timer 0.0
                     :dodge?     nil}   ; nil until this saucer first meets a rock
         step       (/ world-h ufo-entry-tries)
         candidates (map #(wrap (+ (* (nth rs 2) world-h) (* % step)) world-h)
@@ -541,29 +543,40 @@
           asteroids))
 
 (defn- evade
-  "Try a spread of climb and dive rates plus the current heading, and take the
-   one with the most room. Scoring every option against the whole field is what
-   makes this reliable: steering blindly away from one rock is how you fly into
-   the next. Re-run every frame, so the saucer keeps correcting as things move."
+  "Pick climb, level or dive — whichever leaves the most room. Scoring each
+   option against the whole field is what keeps this useful: steering blindly
+   away from one rock is how you fly into the next.
+
+   Only three headings are on offer, and the choice is then held for
+   ufo-evade-hold seconds. A saucer allowed to pick a new angle every frame
+   flies a smooth curve; the original flies straight legs and turns sharply, so
+   we trade some avoidance for keeping the Z."
   [ufo asteroids]
-  (let [s       (* (ufo-speed (:size ufo)) ufo-evade-ratio)
-        ;; current heading first, so an already-good course wins ties and the
-        ;; saucer does not jitter between equally clear options
-        options (cons (:vy ufo) (map #(* % s) ufo-evade-options))
+  (let [s       (* (ufo-speed (:size ufo)) ufo-vertical-ratio)
+        ;; current heading last: max-key keeps the later of equal scores, so an
+        ;; already-good course wins ties and the saucer does not dither
+        options (conj (mapv #(* % s) ufo-evade-options) (:vy ufo))
         best    (apply max-key #(gap-on-course ufo (:vx ufo) % asteroids) options)]
-    (assoc ufo :vy best :turn-timer ufo-turn-interval)))
+    (assoc ufo
+           :vy best
+           :hold-timer ufo-evade-hold
+           :turn-timer ufo-turn-interval)))
 
 (defn- avoid-asteroids
   "Whether a saucer bothers to fly properly is rolled once, the first time it
    meets a rock, and kept for the rest of its life. Rolling again per encounter
    would compound: five brushes with the field at 0.97 each is only 0.86 overall,
    which is not the near-certainty we want."
-  [state]
-  (let [ufo (:ufo state)]
+  [state dt]
+  (let [ufo   (update (:ufo state) :hold-timer #(max 0.0 (- % dt)))
+        state (assoc state :ufo ufo)]
     (if (>= (gap-on-course ufo (:vx ufo) (:vy ufo) (:asteroids state)) ufo-clearance)
       state                                     ; the way ahead is clear
       (case (:dodge? ufo)
-        true  (assoc state :ufo (evade ufo (:asteroids state)))
+        ;; mid-leg: see the rock, but fly this leg out before turning
+        true  (if (pos? (:hold-timer ufo))
+                state
+                (assoc state :ufo (evade ufo (:asteroids state))))
         false state                             ; this one is not a pilot
         (let [[rs seed] (rand-n (:seed state) 1)
               dodge?    (< (nth rs 0) (ufo-dodge-chance (:size ufo)))]
@@ -602,7 +615,7 @@
   (if (:ufo state)
     (-> state
         (steer-ufo dt)          ; the aimless zig-zag...
-        (avoid-asteroids)       ; ...which avoidance is allowed to override
+        (avoid-asteroids dt)    ; ...which avoidance is allowed to override
         (ufo-shoot dt)
         (update :ufo move-ufo dt))
     (update state :ufo-timer #(max 0.0 (- % dt)))))

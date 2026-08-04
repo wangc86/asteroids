@@ -208,18 +208,20 @@ UFO behaviour:
 - 200 points for the large saucer, 1000 for the small one
 - A saucer dies on contact with an asteroid or the ship, and a level will not end
   while one is still on screen
-- **Obstacle avoidance is meant to be near-perfect.** Measured over 420 full
-  crossings — level-5 and level-8 fields, plus shattered fields of up to 22 small
-  fast rocks — a competent saucer hit a rock zero times
+- **The flight path is a Z, and that outranks the avoidance success rate.**
+  Evasion may only choose climb, level or dive (`ufo-evade-options`) at the same
+  `ufo-vertical-ratio` the aimless zig-zag uses, and holds that heading for
+  `ufo-evade-hold` seconds before rethinking. A saucer free to pick any angle
+  every frame flies a smooth curve, which is not what the original looks like.
+  This costs roughly 5–7% of crossings and is meant to
 
 Avoidance works off one number, `gap-on-course`: the tightest hull-to-hull gap
 the saucer would face anywhere within `ufo-evade-horizon` on a given heading,
 computed from *relative* motion via `closest-approach`. A lane-shaped check
 against present positions is not enough — it misses the rock drifting into the
 path. That one number both detects trouble (gap below `ufo-clearance`) and picks
-the way out (`evade` scores every candidate vertical speed in
-`ufo-evade-options` against the whole field and takes the roomiest). It re-runs
-every frame, so the saucer keeps correcting as the field moves.
+the way out (`evade` scores each of the three headings against the whole field
+and takes the roomiest).
 
 Two things that mattered more than they look:
 
@@ -231,6 +233,10 @@ Two things that mattered more than they look:
   saucers inside rocks — that was the single largest cause of losses, bigger
   than every in-flight failure combined. It now tries `ufo-entry-tries` heights
   and comes in where the sky is clearest
+
+Measured over full crossings of drifting fields, a competent saucer gets across
+about 93% of the time at level 5 and 95% at level 8. Without the Z constraint it
+was 100%; with no avoidance at all it was around 30%.
 
 `ufo-dodge-chance` no longer governs how well a saucer flies, only whether it
 bothers at all: it is rolled once, the first time that saucer meets a rock, and
