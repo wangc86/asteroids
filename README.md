@@ -25,12 +25,22 @@ npx shadow-cljs watch app
 
 Then open <http://localhost:8080>.
 
+The first time you visit, the page asks whether you are on a PC or a phone, and
+remembers the answer. The button in the bottom-right corner changes it later.
+You can also link straight into a mode with `?mode=desktop` or `?mode=touch`.
+
+Keyboard:
+
 | Key | Action |
 |---|---|
 | `←` `→` or `A` `D` | Turn |
 | `↑` or `W` | Thrust |
 | `Space` | Fire, and restart after game over |
 | `M` | Mute |
+
+Touch controls are in progress — for now the touch mode gets the landscape
+layout and the "turn your device sideways" prompt, but not yet the on-screen
+controls.
 
 Scoring follows the original: 20 points for a large asteroid, 50 for a medium,
 100 for a small, and an extra life every 10,000 points. You start with three
@@ -94,9 +104,10 @@ That split is enforced by the namespace layout, not just by convention:
 
 ```
 src/asteroids/game.cljs       pure logic — constants, RNG, spawning, tick, collisions
+src/asteroids/mode.cljs       pure logic — which control scheme to run
 src/asteroids/core.cljs       side effects — canvas drawing, keyboard, the rAF loop
 src/asteroids/sound.cljs      side effects — Web Audio synthesis
-test/asteroids/game_test.cljs unit tests for game
+test/asteroids/                unit tests for the pure namespaces
 ```
 
 `asteroids.game` touches no browser API at all: no `document`, no canvas, not

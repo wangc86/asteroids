@@ -92,11 +92,13 @@ from a branch, so the repository's Pages source must be set to **GitHub Actions*
 ## Project layout
 
 ```
-public/index.html             page shell and canvas CSS (4:3, fills the window)
+public/index.html             page shell, chooser/rotate overlays, canvas CSS (4:3)
 src/asteroids/game.cljs       pure logic: constants, RNG, spawning, tick, collisions
-src/asteroids/core.cljs       side effects: draw!, keyboard, canvas, rAF loop
+src/asteroids/mode.cljs       pure logic: which control scheme to run
+src/asteroids/core.cljs       side effects: draw!, keyboard, canvas, rAF loop, page shell
 src/asteroids/sound.cljs      side effects: Web Audio synthesis
 test/asteroids/game_test.cljs unit tests for game
+test/asteroids/mode_test.cljs unit tests for mode
 shadow-cljs.edn               build config (:app → public, :test → node)
 ```
 
@@ -119,7 +121,8 @@ If the drawing code passes ~150 lines, split out `asteroids.render`.
 
 ## Tests
 
-`npm test` runs `test/asteroids/game_test.cljs` under node — no browser needed.
+`npm test` runs everything under `test/` on node — no browser needed. Any
+namespace matching `-test$` is picked up automatically.
 
 The tests lean on the reproducibility of `(initial-state seed)`: a fixed seed
 plus a fixed input sequence gives a fixed result. Their `step` / `run` helpers
@@ -278,6 +281,32 @@ level. It plays during `:playing` and `:dead` but stops at `:game-over`.
 > me, not from measurements of the original, and have not been playtested. They
 > are the most likely thing in this milestone to need adjusting.
 
+## Control modes (milestone 8)
+
+The page asks once whether you are on a PC or a touch device, then remembers the
+answer. `asteroids.mode` is pure and holds the precedence rules; `core` does the
+IO around it.
+
+**Precedence: `?mode=` in the URL > `localStorage` > ask.** The URL wins so a
+link can force a mode for testing or sharing, and it deliberately does **not**
+overwrite the remembered choice — a shared link must not silently change
+someone's setting. `mode/parse` accepts only `"desktop"` and `"touch"`, so a
+stale or hand-edited value falls through to the chooser rather than wedging the
+game.
+
+- The chooser button is a real user gesture, which is the natural place to call
+  `sound/init!`. The keydown path still calls it too, for players who arrive
+  with a remembered mode and never see the chooser
+- **The mode switch drops `?mode=` from the URL before reloading.** Without that,
+  switching while an override is active reloads straight back into the mode you
+  just asked to leave
+- Switching reloads the page rather than tearing the input layer down by hand.
+  It is confirmed first, since a stray tap should not end a run
+- `body` carries `mode-desktop` / `mode-touch`, and CSS keys off that
+- Touch mode plus portrait sets `body.portrait`, which shows the rotate prompt,
+  and sets `paused?` so the game is not quietly killing you behind it. `frame!`
+  still draws while paused, but does not tick and silences the continuous sounds
+
 ## Departures from the original
 
 Keep this list current. Anything here is a decision, not a defect.
@@ -308,6 +337,9 @@ One commit per milestone, and each one must show a visible result in the browser
 - [x] 5. Game rules: score, lives, level progression, invulnerable respawn
 - [x] 6. UFOs and audio: large and small saucer AI, heartbeat that speeds up with the level
 - [x] 7. Deployment: `shadow-cljs release` + GitHub Pages
+- [x] 8. Control modes: device chooser, remembered choice, portrait handling
+- [ ] 9. Touch controls: virtual stick on the left, tap to fire on the right
+- [ ] 10. Hyperspace (still missing from the original's feature list)
 
 ## Working agreement
 

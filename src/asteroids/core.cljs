@@ -3,6 +3,7 @@
    requestAnimationFrame loop. The rules themselves are in asteroids.game,
    which never touches the browser."
   (:require [asteroids.game :as game]
+            [asteroids.mode :as mode]
             [asteroids.sound :as sound]))
 
 ;; defonce keeps the game state alive across hot reloads.
@@ -10,6 +11,9 @@
 (defonce keys-down (atom #{}))
 (defonce started? (atom false))
 (defonce last-ts (atom nil))
+;; Held upright in touch mode: the game waits rather than killing you behind a
+;; prompt you cannot see past.
+(defonce paused? (atom false))
 
 ;; --- Drawing ----------------------------------------------------------------
 
@@ -226,17 +230,68 @@
         el   (canvas)]
     (reset! last-ts ts)
     (ensure-size! el)
-    (swap! state game/tick dt @keys-down)
-    (let [s @state]
-      (draw! (.getContext el "2d") s)
-      ;; game decided what happened; sound decides what it sounds like.
-      (doseq [event (:events s)]
-        (sound/play! event))
-      (sound/thruster! (and (game/playing? s) (:thrusting? (:ship s))))
-      (sound/saucer! (:size (:ufo s)))))
+    (if @paused?
+      ;; Keep drawing so the field is still there behind the prompt, but do not
+      ;; advance anything and do not leave a sound running.
+      (do (draw! (.getContext el "2d") @state)
+          (sound/thruster! false)
+          (sound/saucer! nil))
+      (do
+        (swap! state game/tick dt @keys-down)
+        (let [s @state]
+          (draw! (.getContext el "2d") s)
+          ;; game decided what happened; sound decides what it sounds like.
+          (doseq [event (:events s)]
+            (sound/play! event))
+          (sound/thruster! (and (game/playing? s) (:thrusting? (:ship s))))
+          (sound/saucer! (:size (:ufo s)))))))
   (js/requestAnimationFrame frame!))
 
-(defn init! []
+;; --- Page shell: choosing and remembering a control mode --------------------
+
+(defn- el-by-id [id] (js/document.getElementById id))
+
+(defn- url-mode []
+  (.get (js/URLSearchParams. js/window.location.search) "mode"))
+
+;; Storage throws in some privacy modes, so every touch of it is guarded and a
+;; failure just means "not remembered".
+(defn- saved-mode []
+  (try (.getItem js/window.localStorage mode/storage-key)
+       (catch :default _ nil)))
+
+(defn- remember-mode! [m]
+  (try (.setItem js/window.localStorage mode/storage-key (mode/->str m))
+       (catch :default _ nil)))
+
+(defn- coarse-pointer? []
+  (.-matches (js/window.matchMedia "(pointer: coarse)")))
+
+(defn- show! [id on?]
+  (.toggle (.-classList (el-by-id id)) "show" on?))
+
+(defn- watch-orientation!
+  "Touch play only makes sense sideways. Pausing while upright means the prompt
+   is not covering a game that is quietly killing you."
+  []
+  (let [portrait (js/window.matchMedia "(orientation: portrait)")
+        apply!   (fn []
+                   (let [p? (.-matches portrait)]
+                     (.toggle (.-classList js/document.body) "portrait" p?)
+                     (reset! paused? (and p? (.contains (.-classList js/document.body)
+                                                        "mode-touch")))))]
+    (.addEventListener portrait "change" apply!)
+    (apply!)))
+
+(defn- start-game!
+  "Apply the chosen mode and get the loop going. Called either straight away,
+   when the mode is already known, or from the chooser."
+  [m]
+  (let [classes (.-classList js/document.body)]
+    (.remove classes "mode-desktop" "mode-touch")
+    (.add classes (str "mode-" (mode/->str m))))
+  (show! "chooser" false)
+  (watch-orientation!)
   (when (nil? @state)
     (reset! state (game/initial-state)))
   ;; Start the loop and the listeners exactly once; after a hot reload the
@@ -245,6 +300,54 @@
     (reset! started? true)
     (init-input!)
     (js/requestAnimationFrame frame!)))
+
+(defn- choose! [m]
+  ;; A tap on these buttons is a real user gesture, which is exactly what the
+  ;; browser wants before it will let us start any audio.
+  (sound/init!)
+  (remember-mode! m)
+  (start-game! m))
+
+(defn- other-mode []
+  (if (.contains (.-classList js/document.body) "mode-touch") :desktop :touch))
+
+(defn- init-shell! []
+  (.addEventListener (el-by-id "choose-desktop") "click" #(choose! :desktop))
+  (.addEventListener (el-by-id "choose-touch") "click" #(choose! :touch))
+  ;; Switching mid-game is a big enough change to be worth confirming; a stray
+  ;; tap on a phone should not throw away a run.
+  (.addEventListener (el-by-id "switch-mode") "click"
+                     (fn []
+                       (set! (.-textContent (el-by-id "switch-question"))
+                             (str "Switch to "
+                                  (if (= :touch (other-mode))
+                                    "touch controls?"
+                                    "keyboard controls?")))
+                       (show! "switch-confirm" true)))
+  (.addEventListener (el-by-id "switch-cancel") "click" #(show! "switch-confirm" false))
+  (.addEventListener (el-by-id "switch-ok") "click"
+                     (fn []
+                       (remember-mode! (other-mode))
+                       ;; Drop any ?mode= from the URL on the way out: an
+                       ;; explicit switch has to beat a link someone shared,
+                       ;; otherwise the override would just reload us back into
+                       ;; the mode we asked to leave.
+                       (let [url (js/URL. js/window.location.href)]
+                         (.delete (.-searchParams url) "mode")
+                         ;; Reload rather than tear the input layer down by
+                         ;; hand: a clean slate is worth more than the run.
+                         (.replace js/window.location (.-href url))))))
+
+(defn init! []
+  (init-shell!)
+  (if-let [m (mode/resolve-mode (url-mode) (saved-mode))]
+    (start-game! m)
+    (do
+      ;; Nothing decided yet, so ask. The browser's guess is only a hint on the
+      ;; button; it never chooses for the player.
+      (.setAttribute (el-by-id (str "choose-" (mode/->str (mode/suggested (coarse-pointer?)))))
+                     "data-suggested" "")
+      (show! "chooser" true))))
 
 (defn after-load! []
   ;; After a recompile the canvas transform and the game state are both still

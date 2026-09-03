@@ -2,14 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
   <title>Asteroids</title>
   <style>
     html, body {
       margin: 0;
       height: 100%;
       background: #000;
+      color: #fff;
       overflow: hidden;
+      overscroll-behavior: none;
+      font: 16px/1.5 ui-monospace, "Cascadia Mono", Consolas, monospace;
     }
     body {
       display: flex;
@@ -23,10 +27,142 @@
       height: min(75vw, 100vh);
       background: #000;
     }
+
+    /* --- Overlays ------------------------------------------------------- */
+    /* Opaque, so nothing shows through while the game is not being played. */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: none;
+      place-content: center;
+      justify-items: center;
+      gap: 24px;
+      padding: max(24px, env(safe-area-inset-top))
+               max(24px, env(safe-area-inset-right))
+               max(24px, env(safe-area-inset-bottom))
+               max(24px, env(safe-area-inset-left));
+      background: #000;
+      text-align: center;
+    }
+    .overlay.show { display: grid; }
+
+    .title {
+      margin: 0;
+      font-size: clamp(28px, 7vw, 52px);
+      letter-spacing: 0.34em;
+      /* letter-spacing pads the right edge; pull it back so it looks centred */
+      text-indent: 0.34em;
+    }
+    .subtitle { margin: 0; color: #9a9a9a; }
+
+    .choices {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 18px;
+    }
+    .choice {
+      width: 210px;
+      padding: 22px 18px;
+      background: #000;
+      color: #fff;
+      border: 2px solid #4a4a4a;
+      font: inherit;
+      cursor: pointer;
+    }
+    .choice:hover, .choice:focus-visible { border-color: #fff; outline: none; }
+    .choice .icon { font-size: 34px; line-height: 1.2; }
+    .choice .what { margin-top: 10px; font-size: 18px; }
+    .choice .how { margin-top: 8px; color: #9a9a9a; font-size: 13px; }
+    /* The browser's guess, shown but never acted on without a tap. */
+    .choice[data-suggested] { border-color: #fff; }
+    .choice[data-suggested] .how::after {
+      display: block;
+      margin-top: 8px;
+      color: #6c6;
+      content: "looks like your device";
+    }
+
+    .note { margin: 0; max-width: 34em; color: #6a6a6a; font-size: 13px; }
+
+    .actions { display: flex; gap: 14px; }
+    .action {
+      padding: 12px 22px;
+      background: #000;
+      color: #fff;
+      border: 2px solid #4a4a4a;
+      font: inherit;
+      cursor: pointer;
+    }
+    .action:hover, .action:focus-visible { border-color: #fff; outline: none; }
+    .action.primary { border-color: #fff; }
+
+    /* --- Mode switch ----------------------------------------------------- */
+    #switch-mode {
+      position: fixed;
+      right: max(10px, env(safe-area-inset-right));
+      bottom: max(10px, env(safe-area-inset-bottom));
+      z-index: 5;
+      width: 40px;
+      height: 40px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #7a7a7a;
+      border: 1px solid #3a3a3a;
+      font: 18px/1 ui-monospace, monospace;
+      cursor: pointer;
+      display: none;
+    }
+    #switch-mode:hover { color: #fff; border-color: #fff; }
+    body.mode-desktop #switch-mode, body.mode-touch #switch-mode { display: block; }
+
+    /* --- Rotate prompt (touch mode only) --------------------------------- */
+    body.mode-touch.portrait #rotate { display: grid; }
+    #rotate .icon { font-size: 46px; }
   </style>
 </head>
 <body>
   <canvas id="game"></canvas>
+
+  <!-- Device chooser. Shown only when neither the URL nor storage has decided. -->
+  <div id="chooser" class="overlay">
+    <h1 class="title">ASTEROIDS</h1>
+    <p class="subtitle">How are you playing?</p>
+    <div class="choices">
+      <button class="choice" id="choose-desktop">
+        <div class="icon">⌨</div>
+        <div class="what">PC / laptop</div>
+        <div class="how">Arrow keys and space</div>
+      </button>
+      <button class="choice" id="choose-touch">
+        <div class="icon">📱</div>
+        <div class="what">Phone / tablet</div>
+        <div class="how">Touch controls, held sideways</div>
+      </button>
+    </div>
+    <p class="note">
+      Your choice is remembered. You can change it later with the button in the
+      bottom-right corner.
+    </p>
+  </div>
+
+  <!-- Asked for when a phone is held upright in touch mode. -->
+  <div id="rotate" class="overlay">
+    <div class="icon">⟳</div>
+    <p class="subtitle">Turn your device sideways to play.</p>
+  </div>
+
+  <button id="switch-mode" title="Switch control mode">⇄</button>
+
+  <div id="switch-confirm" class="overlay">
+    <p class="subtitle" id="switch-question">Switch control mode?</p>
+    <p class="note">This reloads the page, so the game in progress will end.</p>
+    <div class="actions">
+      <button class="action" id="switch-cancel">Cancel</button>
+      <button class="action primary" id="switch-ok">Switch</button>
+    </div>
+  </div>
+
   <script src="js/main.js"></script>
 </body>
 </html>
