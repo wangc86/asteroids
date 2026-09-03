@@ -38,9 +38,11 @@ Keyboard:
 | `Space` | Fire, and restart after game over |
 | `M` | Mute |
 
-Touch controls are in progress — for now the touch mode gets the landscape
-layout and the "turn your device sideways" prompt, but not yet the on-screen
-controls.
+Touch, holding the device sideways: drag anywhere in the **left** strip to steer
+— the stick appears under your thumb, and the ship turns to face where you push,
+thrusting once its nose comes round. Tap anywhere in the **right** strip to
+fire, and to start again after a game over. The strips sit in the black margins
+either side of the playfield, so they never cover the game.
 
 Scoring follows the original: 20 points for a large asteroid, 50 for a medium,
 100 for a small, and an extra life every 10,000 points. You start with three
@@ -78,6 +80,11 @@ random, possibly on top of a rock — is not implemented.
 **The score uses a normal monospace font**, where the original drew its digits
 as vector strokes like everything else.
 
+**Touch mode aims for you.** The stick names a heading and the ship turns to
+face it, so you never line the nose up by hand. Momentum, drag and turn rate are
+all unchanged, but it is easier than the keyboard — and the cabinet had buttons,
+not a stick.
+
 Two details are kept the way the original had them, rather than modernised.
 Shots travel at a fixed speed and do **not** inherit the ship's velocity, so at
 full throttle you can very nearly catch up with your own bullets. And firing is
@@ -105,9 +112,11 @@ That split is enforced by the namespace layout, not just by convention:
 ```
 src/asteroids/game.cljs       pure logic — constants, RNG, spawning, tick, collisions
 src/asteroids/mode.cljs       pure logic — which control scheme to run
+src/asteroids/control.cljs    pure logic — virtual stick to action keywords
 src/asteroids/core.cljs       side effects — canvas drawing, keyboard, the rAF loop
+src/asteroids/touch.cljs      side effects — pointer events for the touch strips
 src/asteroids/sound.cljs      side effects — Web Audio synthesis
-test/asteroids/                unit tests for the pure namespaces
+test/asteroids/               unit tests for the pure namespaces
 ```
 
 `asteroids.game` touches no browser API at all: no `document`, no canvas, not
@@ -119,6 +128,13 @@ keywords to `:events` — `:fire`, `:bang-large`, `:beat-a` — and `core` hands
 them to `asteroids.sound` after drawing. The upshot is that "shooting a large
 asteroid makes the large explosion sound" is an ordinary unit test, with no
 audio hardware involved.
+
+The touch controls follow the same shape. `asteroids.control` turns the virtual
+stick into the same `#{:left :right :thrust}` the keyboard produces, so
+`asteroids.game` has no idea touch exists and the touch version provably plays
+by identical rules. That also means the feel of the stick — when it turns, when
+it decides you are aligned enough to thrust — is tested under node rather than
+judged by waggling a thumb.
 
 The one design decision worth calling out is that **the random number generator's
 state lives inside the game state** (`:seed`, a small xorshift32). Anything that

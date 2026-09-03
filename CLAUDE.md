@@ -95,10 +95,11 @@ from a branch, so the repository's Pages source must be set to **GitHub Actions*
 public/index.html             page shell, chooser/rotate overlays, canvas CSS (4:3)
 src/asteroids/game.cljs       pure logic: constants, RNG, spawning, tick, collisions
 src/asteroids/mode.cljs       pure logic: which control scheme to run
+src/asteroids/control.cljs    pure logic: virtual stick to action keywords
 src/asteroids/core.cljs       side effects: draw!, keyboard, canvas, rAF loop, page shell
+src/asteroids/touch.cljs      side effects: pointer events for the touch strips
 src/asteroids/sound.cljs      side effects: Web Audio synthesis
-test/asteroids/game_test.cljs unit tests for game
-test/asteroids/mode_test.cljs unit tests for mode
+test/asteroids/               unit tests for the pure namespaces
 shadow-cljs.edn               build config (:app → public, :test → node)
 ```
 
@@ -307,6 +308,44 @@ game.
   and sets `paused?` so the game is not quietly killing you behind it. `frame!`
   still draws while paused, but does not tick and silences the continuous sounds
 
+## Touch controls (milestone 9)
+
+Left strip steers, right strip fires. `asteroids.control` is pure and holds the
+mapping; `asteroids.touch` owns the pointer events.
+
+**The whole point is that `game` never learns touch exists.** `control` emits
+the same `#{:left :right :thrust}` the keyboard does, and `core` merges the two
+sources, so the touch version provably plays by identical rules. **Do not add a
+touch-shaped argument to `tick`** — anything new belongs in `control` instead.
+
+- The stick names a **heading, not a velocity**: the ship still turns at
+  `rotate-speed` and still only accelerates under thrust, so inertia and drag
+  are untouched
+- **Thrust also needs the nose roughly aligned** (`thrust-align`). Without it, a
+  full push away from the ship's heading accelerates it backwards while it
+  turns, which reads as broken controls
+- `turn-epsilon` must stay above one frame of rotation (200°/s ÷ 60 = 3.33°) or
+  the ship oscillates around the heading it is trying to hold. There is a test
+  asserting exactly this
+- The stick's origin is **wherever the finger lands**, not a fixed base. On a
+  16:9 phone the strip is only ~87px wide, where a fixed base would be unusable
+- **Firing latches.** A tap that begins and ends between two frames would
+  otherwise never be seen, since `game` fires on the rising edge of `:fire`
+- Pointer events and pointer ids throughout, never touch events: steering and
+  firing must work with two thumbs at once. `setPointerCapture` is wrapped in a
+  `try` — it is an enhancement, and a failure must not abort the handler
+- `blur` clears the stick and every held pointer, or a finger that leaves the
+  window leaves the ship thrusting forever
+
+The strips live in the letterbox margin left by the 4:3 playfield, so they never
+cover the game. They have a 120px floor, so on a 16:9 device they overlap the
+very edge of the field rather than becoming too narrow to use.
+
+> The feel parameters (`stick-max`, `dead-zone`, `thrust-threshold`,
+> `thrust-align`) were chosen at a desk with a mouse. Like the milestone 2
+> handling values, they want a playtest on real glass before they are treated as
+> settled.
+
 ## Departures from the original
 
 Keep this list current. Anything here is a decision, not a defect.
@@ -318,6 +357,7 @@ Keep this list current. Anything here is a decision, not a defect.
 | **Objects are mirrored across screen edges** | The original popped an object to the far side when its centre crossed. Mirroring makes a radius-42 rock look like it slides across rather than teleporting. Physics is unchanged — still centre-based wrap |
 | **The score uses `fillText`** | The original drew digits as vector strokes. Hand-drawn digit strokes would match, but that is separate work |
 | **No hyperspace** | Listed in the scope above but never built, and no milestone covered it. Still open |
+| **Touch mode aims for you** | The virtual stick names a heading and the ship turns to it, so touch play never asks you to line the nose up by hand. Inertia, drag and rotation speed are unchanged, but it is easier than the keyboard. The arcade cabinet had buttons, not a stick |
 
 ## Line endings
 
@@ -338,7 +378,7 @@ One commit per milestone, and each one must show a visible result in the browser
 - [x] 6. UFOs and audio: large and small saucer AI, heartbeat that speeds up with the level
 - [x] 7. Deployment: `shadow-cljs release` + GitHub Pages
 - [x] 8. Control modes: device chooser, remembered choice, portrait handling
-- [ ] 9. Touch controls: virtual stick on the left, tap to fire on the right
+- [x] 9. Touch controls: virtual stick on the left, tap to fire on the right
 - [ ] 10. Hyperspace (still missing from the original's feature list)
 
 ## Working agreement

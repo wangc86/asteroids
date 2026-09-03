@@ -119,6 +119,68 @@
     /* --- Rotate prompt (touch mode only) --------------------------------- */
     body.mode-touch.portrait #rotate { display: grid; }
     #rotate .icon { font-size: 46px; }
+
+    /* --- Touch control strips -------------------------------------------- */
+    /* The 4:3 playfield leaves a letterbox margin on a widescreen phone, and
+       that is where the controls go, so they never cover the game. On a 16:9
+       device the margin is only about 87px, so the strips have a floor and
+       overlap the very edge of the field there rather than becoming unusable. */
+    .pad {
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      z-index: 4;
+      display: none;
+      width: max(120px, calc((100vw - min(100vw, 133.3333vh)) / 2));
+      background: rgba(255, 255, 255, 0.035);
+      /* Without this, dragging scrolls the page instead of steering. */
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body.mode-touch:not(.portrait) .pad { display: block; }
+    #pad-left  { left: 0;  border-right: 1px solid rgba(255, 255, 255, 0.13); }
+    #pad-right { right: 0; border-left:  1px solid rgba(255, 255, 255, 0.13); }
+    .pad .hint {
+      position: absolute;
+      bottom: max(12px, env(safe-area-inset-bottom));
+      width: 100%;
+      color: #5a5a5a;
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-align: center;
+      pointer-events: none;
+    }
+    /* The stick is drawn in the DOM, not on the canvas: the strips can sit
+       outside the canvas entirely, and the canvas draws in world units. */
+    #stick-base, #stick-knob {
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: none;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    #stick-base {
+      width: 110px;
+      height: 110px;
+      margin: -55px 0 0 -55px;      /* centre on the touch point */
+      border: 2px solid rgba(255, 255, 255, 0.22);
+    }
+    #stick-knob {
+      width: 46px;
+      height: 46px;
+      margin: -23px 0 0 -23px;
+      background: rgba(255, 255, 255, 0.16);
+      border: 2px solid rgba(255, 255, 255, 0.55);
+    }
+
+    /* Thumbs rest at the bottom, so in touch mode the switch button moves out
+       of reach of the fire strip. */
+    body.mode-touch #switch-mode {
+      top: max(10px, env(safe-area-inset-top));
+      bottom: auto;
+    }
   </style>
 </head>
 <body>
@@ -150,6 +212,16 @@
   <div id="rotate" class="overlay">
     <div class="icon">⟳</div>
     <p class="subtitle">Turn your device sideways to play.</p>
+  </div>
+
+  <!-- Touch controls: steer on the left, tap to fire on the right. -->
+  <div id="pad-left" class="pad">
+    <div id="stick-base"></div>
+    <div id="stick-knob"></div>
+    <div class="hint">MOVE</div>
+  </div>
+  <div id="pad-right" class="pad">
+    <div class="hint">FIRE</div>
   </div>
 
   <button id="switch-mode" title="Switch control mode">⇄</button>

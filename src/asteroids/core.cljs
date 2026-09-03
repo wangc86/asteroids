@@ -4,7 +4,8 @@
    which never touches the browser."
   (:require [asteroids.game :as game]
             [asteroids.mode :as mode]
-            [asteroids.sound :as sound]))
+            [asteroids.sound :as sound]
+            [asteroids.touch :as touch]))
 
 ;; defonce keeps the game state alive across hot reloads.
 (defonce state (atom nil))
@@ -237,7 +238,10 @@
           (sound/thruster! false)
           (sound/saucer! nil))
       (do
-        (swap! state game/tick dt @keys-down)
+        ;; Both input layers speak the same vocabulary, so game cannot tell them
+        ;; apart. In desktop mode the touch side is simply always empty.
+        (swap! state game/tick dt
+               (into @keys-down (touch/take-inputs! (get-in @state [:ship :angle]))))
         (let [s @state]
           (draw! (.getContext el "2d") s)
           ;; game decided what happened; sound decides what it sounds like.
@@ -299,6 +303,8 @@
   (when-not @started?
     (reset! started? true)
     (init-input!)
+    (when (= :touch m)
+      (touch/init!))
     (js/requestAnimationFrame frame!)))
 
 (defn- choose! [m]
