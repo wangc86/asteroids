@@ -225,6 +225,19 @@ rather than a guessed constant, and only when the canvas is resized:
 > are shown or not; this silently reported "no strip" and left the inset at zero.
 > Measure `getBoundingClientRect` and check for a zero width instead.
 
+**The canvas is sized in `dvh`, not `vh`.** On a phone `100vh` means "with the
+address bar hidden", which is taller than what you can actually see, so the
+canvas overflowed the visible viewport and was clipped top and bottom — the
+score first, but rocks and the ship with it. `dvh` tracks the viewport that is
+really on screen. The `vh` pair is left in front of the `dvh` pair as a fallback
+for anything that does not know the unit.
+
+Both dimensions must come from the same pair of limits (`min(100vw, 133.3333dvh)`
+and `min(75vw, 100dvh)`), which is what holds the ratio exactly. **A
+`max-height: 100%` clamp does not work**: with an explicit width, `aspect-ratio`
+does not shrink the width to compensate, so the playfield comes out stretched —
+measured at 2.16:1 on a phone-shaped viewport.
+
 > The score currently uses `fillText` with a monospace font. The original used a
 > vector font; hand-drawing the digit strokes would get closer, but that is a
 > separate piece of work and does not affect the rules.

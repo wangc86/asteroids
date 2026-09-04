@@ -9,6 +9,11 @@
     html, body {
       margin: 0;
       height: 100%;
+      /* 100vh on a phone means "with the address bar hidden", which is taller
+         than what you can actually see. The canvas was overflowing that and
+         being clipped top and bottom — the score first, but rocks and the ship
+         too. dvh tracks the viewport you can really see. */
+      height: 100dvh;
       background: #000;
       color: #fff;
       overflow: hidden;
@@ -20,11 +25,17 @@
       align-items: center;
       justify-content: center;
     }
-    /* Fill the window while keeping 4:3, the original cabinet's aspect ratio. */
+    /* Fill the window while keeping 4:3, the original cabinet's aspect ratio.
+       Both dimensions come from the same pair of limits, which is what holds
+       the ratio exactly; a max-height clamp would squash the width instead.
+       The dvh pair repeats the vh pair and wins wherever dvh is understood —
+       browsers that do not know the unit drop those two declarations. */
     canvas {
       display: block;
       width: min(100vw, 133.3333vh);
       height: min(75vw, 100vh);
+      width: min(100vw, 133.3333dvh);
+      height: min(75vw, 100dvh);
       background: #000;
     }
 
