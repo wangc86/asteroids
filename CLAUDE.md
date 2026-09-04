@@ -207,6 +207,24 @@ The HUD is drawn straight onto the canvas: score top left, lives as little ship
 icons. The score's `(str n)` is cached and **only recomputed when the score
 changes**, so the render loop does no string work.
 
+**`core/measure-hud!` adapts the HUD to the device**, from the measured layout
+rather than a guessed constant, and only when the canvas is resized:
+
+- `:inset` — how far the left touch strip reaches over the playfield, in world
+  units. The strips have a 120px floor, so on a 16:9 phone they overlap by ~37px
+  and on a 4:3 tablet, which has no letterbox at all, by the full 120px. Without
+  this the score sits underneath one and is invisible
+- `:scale` — the world is a fixed 1024×768 however small the canvas is, so a
+  30px score renders at 15 CSS px on a phone. This grows the HUD until it is at
+  least `hud-min-css-font` on screen, and is 1.0 on any desktop-sized canvas, so
+  keyboard play looks exactly as it did
+- Both font strings are built there too, keeping `str` out of the render loop
+
+> **Do not test a strip's visibility with `offsetParent`.** The strips are
+> `position: fixed`, and `offsetParent` is null for fixed elements whether they
+> are shown or not; this silently reported "no strip" and left the inset at zero.
+> Measure `getBoundingClientRect` and check for a zero width instead.
+
 > The score currently uses `fillText` with a monospace font. The original used a
 > vector font; hand-drawing the digit strokes would get closer, but that is a
 > separate piece of work and does not affect the rules.

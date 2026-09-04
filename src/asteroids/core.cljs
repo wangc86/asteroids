@@ -16,6 +16,7 @@
 ;; Held upright in touch mode: the game waits rather than killing you behind a
 ;; prompt you cannot see past.
 (defonce paused? (atom false))
+(defonce control-mode (atom nil))     ; :desktop or :touch, once chosen
 
 (defn- el-by-id [id] (js/document.getElementById id))
 
@@ -127,27 +128,81 @@
         (reset! score-cache {:n n :s s})
         s))))
 
+;; How the HUD has to adapt to the device it landed on. Recomputed only when the
+;; canvas is resized, and the font string is built there too, so the render loop
+;; still does no string work.
+(def ^:const hud-base-font 30)         ; world px, the size desktop has always had
+(def ^:const hud-min-css-font 22)      ; but never smaller than this on screen
+
+(defn- font-str [px]
+  (str (js/Math.round px) "px ui-monospace, Consolas, monospace"))
+
+(defonce hud-metrics
+  (atom {:inset 0.0 :scale 1.0
+         :font (font-str hud-base-font) :font-small (font-str 20)}))
+
+(defn- measure-hud!
+  "Two things the phone layout breaks, both fixed from the measured layout
+   rather than a guessed constant.
+
+   The touch strips have a minimum width, so on anything narrower than about
+   19.5:9 — and on a 4:3 tablet, which has no letterbox at all — the left strip
+   reaches over the playfield and buries the score. :inset is exactly how far it
+   reaches, in world units.
+
+   And the world is a fixed 1024x768 however small the canvas is, so a 30px
+   score renders at 15 CSS px on a phone. :scale grows the HUD until it is at
+   least hud-min-css-font on screen, which leaves desktop untouched."
+  [el]
+  (let [rect  (.getBoundingClientRect el)
+        cw    (.-width rect)
+        ch    (.-height rect)
+        ;; A hidden element measures zero, which is how we spot desktop mode.
+        ;; Do not reach for offsetParent here: the strips are position:fixed,
+        ;; and that is always nil for fixed elements whether shown or not.
+        pad   (some-> (el-by-id "pad-left") (.getBoundingClientRect))
+        inset (if (and pad (pos? (.-width pad)) (pos? cw))
+                (max 0.0 (* (- (.-right pad) (.-left rect))
+                            (/ game/world-w cw)))
+                0.0)
+        scale (if (pos? ch)
+                (max 1.0 (/ (* hud-min-css-font (/ game/world-h ch)) hud-base-font))
+                1.0)]
+    (reset! hud-metrics
+            {:inset      inset
+             :scale      scale
+             :font       (font-str (* hud-base-font scale))
+             :font-small (font-str (* 20 scale))})))
+
 (defn- draw-life-icon!
   "Lives are shown as little ships, the same way the original does it."
-  [ctx x y]
+  [ctx x y scale]
   (.save ctx)
   (.translate ctx x y)
   (.rotate ctx (- (/ js/Math.PI 2)))     ; point up
-  (.scale ctx 0.7 0.7)
+  (.scale ctx (* 0.7 scale) (* 0.7 scale))
   (draw-ship-body! ctx)
   (.restore ctx))
 
 (defn- draw-hud! [ctx {:keys [score lives phase]}]
-  (set! (.-font ctx) "30px ui-monospace, Consolas, monospace")
-  (set! (.-textAlign ctx) "left")
-  (.fillText ctx (score-text score) 28 46)
-  (dotimes [i lives]
-    (draw-life-icon! ctx (+ 36 (* i 26)) 78))
-  (when (= :game-over phase)
-    (set! (.-textAlign ctx) "center")
-    (.fillText ctx "GAME OVER" (/ game/world-w 2) (- (/ game/world-h 2) 20))
-    (set! (.-font ctx) "20px ui-monospace, Consolas, monospace")
-    (.fillText ctx "PRESS SPACE" (/ game/world-w 2) (+ (/ game/world-h 2) 20))))
+  (let [{:keys [inset scale font font-small]} @hud-metrics]
+    (set! (.-font ctx) font)
+    (set! (.-textAlign ctx) "left")
+    ;; inset clears the touch strip; scale keeps it legible on a small screen
+    (.fillText ctx (score-text score) (+ inset (* 28 scale)) (* 46 scale))
+    (dotimes [i lives]
+      (draw-life-icon! ctx
+                       (+ inset (* (+ 36 (* i 26)) scale))
+                       (* 78 scale)
+                       scale))
+    (when (= :game-over phase)
+      (set! (.-textAlign ctx) "center")
+      (.fillText ctx "GAME OVER" (/ game/world-w 2) (- (/ game/world-h 2) 20))
+      (set! (.-font ctx) font-small)
+      ;; "PRESS SPACE" is no use to someone holding a phone.
+      (.fillText ctx (if (= :touch @control-mode) "TAP TO PLAY AGAIN" "PRESS SPACE")
+                 (/ game/world-w 2)
+                 (+ (/ game/world-h 2) (* 20 scale))))))
 
 ;; --- The whole frame --------------------------------------------------------
 
@@ -229,7 +284,10 @@
       (.setTransform (.getContext el "2d")
                      (/ w game/world-w) 0
                      0 (/ h game/world-h)
-                     0 0))))
+                     0 0)
+      ;; The strips and the HUD only move when the layout does, so measuring
+      ;; here keeps it out of the render loop.
+      (measure-hud! el))))
 
 (defn frame! [ts]
   (let [prev (or @last-ts ts)
@@ -297,6 +355,7 @@
   "Apply the chosen mode and get the loop going. Called either straight away,
    when the mode is already known, or from the chooser."
   [m]
+  (reset! control-mode m)
   (let [classes (.-classList js/document.body)]
     (.remove classes "mode-desktop" "mode-touch")
     (.add classes (str "mode-" (mode/->str m))))
