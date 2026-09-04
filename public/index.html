@@ -143,36 +143,42 @@
     #pad-right { right: 0; border-left:  1px solid rgba(255, 255, 255, 0.13); }
     .pad .hint {
       position: absolute;
-      bottom: max(12px, env(safe-area-inset-bottom));
+      bottom: max(14px, env(safe-area-inset-bottom));
       width: 100%;
-      color: #5a5a5a;
-      font-size: 11px;
-      letter-spacing: 0.2em;
+      color: #e8e8e8;
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: 0.3em;
+      text-indent: 0.3em;           /* letter-spacing pads the right edge */
       text-align: center;
       pointer-events: none;
     }
     /* The stick is drawn in the DOM, not on the canvas: the strips can sit
-       outside the canvas entirely, and the canvas draws in world units. */
-    #stick-base, #stick-knob {
+       outside the canvas entirely, and the canvas draws in world units.
+       Both pieces are parked on the strip's centre; only the knob is moved,
+       and only by adding to this transform. */
+    #stick-base, #stick-knob, .fire-icon {
       position: absolute;
-      top: 0;
-      left: 0;
-      display: none;
-      border-radius: 50%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
       pointer-events: none;
     }
-    #stick-base {
-      width: 110px;
-      height: 110px;
-      margin: -55px 0 0 -55px;      /* centre on the touch point */
-      border: 2px solid rgba(255, 255, 255, 0.22);
-    }
+    /* Sized from control/stick-max by touch/size-ring!, so the rim of the ring
+       is exactly full deflection. */
+    /* border-box so the drawn rim lands on stick-max rather than 2px outside it */
+    #stick-base, #stick-knob { border-radius: 50%; box-sizing: border-box; }
+    #stick-base { border: 2px solid rgba(255, 255, 255, 0.3); }
     #stick-knob {
-      width: 46px;
-      height: 46px;
-      margin: -23px 0 0 -23px;
-      background: rgba(255, 255, 255, 0.16);
-      border: 2px solid rgba(255, 255, 255, 0.55);
+      background: rgba(255, 255, 255, 0.2);
+      border: 2px solid rgba(255, 255, 255, 0.62);
+    }
+    .fire-icon {
+      width: 74px;
+      stroke: rgba(255, 255, 255, 0.62);
+      stroke-width: 4;
+      stroke-linecap: round;
+      fill: rgba(255, 255, 255, 0.62);
     }
 
     /* Thumbs rest at the bottom, so in touch mode the switch button moves out
@@ -221,6 +227,15 @@
     <div class="hint">MOVE</div>
   </div>
   <div id="pad-right" class="pad">
+    <!-- A shot drawn the way the game draws one — a small solid square — with a
+         trail behind it, so it reads as a bullet in the same line-art style.
+         Decoration only: the whole strip fires, not just the icon. -->
+    <svg class="fire-icon" viewBox="0 0 100 124" aria-hidden="true">
+      <rect x="41" y="12" width="18" height="18" stroke="none"/>
+      <line x1="50" y1="52" x2="50" y2="112"/>
+      <line x1="27" y1="62" x2="27" y2="100"/>
+      <line x1="73" y1="62" x2="73" y2="100"/>
+    </svg>
     <div class="hint">FIRE</div>
   </div>
 

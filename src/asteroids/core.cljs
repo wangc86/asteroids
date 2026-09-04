@@ -2,7 +2,8 @@
   "Every side effect lives here: canvas drawing, keyboard events, and the
    requestAnimationFrame loop. The rules themselves are in asteroids.game,
    which never touches the browser."
-  (:require [asteroids.game :as game]
+  (:require [asteroids.control :as control]
+            [asteroids.game :as game]
             [asteroids.mode :as mode]
             [asteroids.sound :as sound]
             [asteroids.touch :as touch]))
@@ -297,7 +298,9 @@
   (show! "chooser" false)
   (watch-orientation!)
   (when (nil? @state)
-    (reset! state (game/initial-state)))
+    (reset! state (cond-> (game/initial-state)
+                    ;; The stick aims for you, so touch play runs gentler.
+                    (= :touch m) (game/with-thrust control/thrust))))
   ;; Start the loop and the listeners exactly once; after a hot reload the
   ;; re-resolution inside frame! picks up the new code.
   (when-not @started?

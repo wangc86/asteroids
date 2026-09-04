@@ -18,6 +18,9 @@
 
 ;; Feel parameters, settled by the user's playtest in milestone 2. Do not tweak.
 (def ^:const rotate-speed 200)   ; degrees/second
+;; The default. A game can be started with a different figure — the touch
+;; controls use a gentler one — so this travels in the state rather than being
+;; read straight out of the var. See with-thrust.
 (def ^:const thrust 340)         ; px/second²
 (def ^:const drag 0.25)          ; per-second exponential velocity decay (0 = frictionless)
 (def ^:const max-speed 540)      ; px/second
@@ -221,9 +224,17 @@
       :phase           :playing
       :timer           0.0        ; countdown for the current phase; all phases share it
       :invuln          invuln-time
+      :thrust          thrust     ; overridable per game; see with-thrust
       :events          []         ; sound events for this frame, consumed by core
       :seed            seed
       :t               0.0})))
+
+(defn with-thrust
+  "Run this game at a different acceleration. The touch controls do the aiming
+   for you, which made the stock figure feel like more than a thumb could
+   answer; nothing else about the physics changes."
+  [state ship-thrust]
+  (assoc state :thrust ship-thrust))
 
 ;; --- Stepping one frame -----------------------------------------------------
 
@@ -243,15 +254,18 @@
     :else                                0.0))
 
 (defn update-ship
-  "Rotate → thrust → drag → clamp speed → move and wrap."
-  [ship dt inputs]
+  "Rotate → thrust → drag → clamp speed → move and wrap.
+
+   ship-thrust is passed in rather than read from the var, so a game can be run
+   at a gentler acceleration without a second set of physics."
+  [ship dt inputs ship-thrust]
   (let [angle      (+ (:angle ship)
                       (* (turn-dir inputs) rotate-speed deg->rad dt))
         thrusting? (boolean (inputs :thrust))
         ;; Thrust accelerates along the nose; releasing it does not zero the
         ;; velocity, drag merely eats away at it — that is the inertia.
-        ax         (if thrusting? (* thrust (js/Math.cos angle)) 0.0)
-        ay         (if thrusting? (* thrust (js/Math.sin angle)) 0.0)
+        ax         (if thrusting? (* ship-thrust (js/Math.cos angle)) 0.0)
+        ay         (if thrusting? (* ship-thrust (js/Math.sin angle)) 0.0)
         ;; Exponential decay is frame-rate independent, so a jittery dt does not
         ;; make the handling jittery too.
         decay      (js/Math.exp (- (* drag dt)))
@@ -727,7 +741,9 @@
 
     :game-over
     (if (fire-edge? state inputs)
-      (initial-state (:seed state))
+      ;; A new game, but still the acceleration this one was being played at —
+      ;; restarting must not quietly hand a touch player the keyboard figure.
+      (with-thrust (initial-state (:seed state)) (:thrust state))
       state)
 
     state))
@@ -740,7 +756,7 @@
       (update :t + dt)
       (update :invuln #(max 0.0 (- % dt)))
       (update :timer #(max 0.0 (- % dt)))
-      (cond-> (playing? state) (-> (update :ship update-ship dt inputs)
+      (cond-> (playing? state) (-> (update :ship update-ship dt inputs (:thrust state))
                                    (update :level-t + dt)))
       (update :asteroids (fn [as] (mapv #(drift % dt) as)))
       (advance-ufo dt)

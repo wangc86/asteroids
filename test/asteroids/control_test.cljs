@@ -3,7 +3,8 @@
    the same rules as the keyboard, so its mapping is pinned down here rather
    than judged by feel on a phone."
   (:require [cljs.test :refer [deftest is testing]]
-            [asteroids.control :as control]))
+            [asteroids.control :as control]
+            [asteroids.game :as game]))
 
 (def ^:const up (- (/ js/Math.PI 2)))    ; screen y grows downward
 (def ^:const down (/ js/Math.PI 2))
@@ -14,6 +15,12 @@
   "Hold the stick at a heading, deflected by `frac` of full travel."
   [angle frac]
   [(* frac (js/Math.cos angle)) (* frac (js/Math.sin angle))])
+
+(deftest touch-play-accelerates-more-gently-than-the-keyboard
+  (is (< control/thrust game/thrust)
+      "the stick aims for you, so the ship must build up speed more slowly")
+  (is (> control/thrust (* 0.5 game/thrust))
+      "but it is a trim, not a different game"))
 
 ;; --- The stick itself -------------------------------------------------------
 

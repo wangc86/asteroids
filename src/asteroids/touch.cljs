@@ -9,17 +9,22 @@
   (:require [asteroids.control :as control]))
 
 ;; defonce so a hot reload does not lose the finger currently on the glass.
-(defonce stick (atom nil))        ; {:id :ox :oy :dx :dy}, pad-relative pixels
+(defonce stick (atom nil))        ; {:id :dx :dy}, pixels from the ring's centre
 (defonce fire-down (atom #{}))    ; pointer ids currently held in the fire zone
 (defonce fire-latch (atom false)) ; a tap seen since the last frame
 (defonce started? (atom false))
 
 (defn- el [id] (js/document.getElementById id))
 
-(defn- pad-xy [pad e]
+(defn- offset-from-centre
+  "Where the finger is relative to the middle of the strip, which is where the
+   ring is drawn. The ring is a fixed landmark rather than something that
+   appears under the thumb, so direction is absolute: touching near the top of
+   the strip means up, wherever the previous touch happened to be."
+  [pad e]
   (let [r (.getBoundingClientRect pad)]
-    [(- (.-clientX e) (.-left r))
-     (- (.-clientY e) (.-top r))]))
+    [(- (.-clientX e) (.-left r) (/ (.-width r) 2))
+     (- (.-clientY e) (.-top r) (/ (.-height r) 2))]))
 
 (defn- capture!
   "Keep the drag alive after the finger wanders off the strip. This is an
@@ -29,24 +34,17 @@
   (try (.setPointerCapture pad (.-pointerId e))
        (catch :default _ nil)))
 
-(defn- place! [node x y]
-  (set! (.-transform (.-style node)) (str "translate(" x "px," y "px)")))
-
-(defn- render-stick! []
-  (let [base (el "stick-base")
-        knob (el "stick-knob")]
-    (if-let [{:keys [ox oy dx dy]} @stick]
-      (let [[sx sy] (control/stick-vector dx dy)]
-        (set! (.-display (.-style base)) "block")
-        (set! (.-display (.-style knob)) "block")
-        (place! base ox oy)
-        ;; Draw the knob from the clamped vector, so it never flies off the base
-        ;; however far the finger travels.
-        (place! knob
-                (+ ox (* sx control/stick-max))
-                (+ oy (* sy control/stick-max))))
-      (do (set! (.-display (.-style base)) "none")
-          (set! (.-display (.-style knob)) "none")))))
+(defn- render-stick!
+  "The ring never moves; only the knob does. CSS parks both on the strip's
+   centre, so all this has to add is the offset — which keeps it correct through
+   a rotation or a resize without recomputing anything."
+  []
+  (let [[sx sy] (if-let [{:keys [dx dy]} @stick]
+                  (control/stick-vector dx dy)
+                  [0.0 0.0])]           ; no finger: the knob rests in the middle
+    (set! (.-transform (.-style (el "stick-knob")))
+          (str "translate(-50%,-50%) translate("
+               (* sx control/stick-max) "px," (* sy control/stick-max) "px)"))))
 
 (defn- release-stick! []
   (reset! stick nil)
@@ -58,19 +56,18 @@
      pad "pointerdown"
      (fn [e]
        (.preventDefault e)
-       ;; Wherever the finger lands is the centre of the stick. A fixed base
-       ;; would be a poor fit for a strip this narrow, and means looking down.
-       (let [[x y] (pad-xy pad e)]
+       ;; Anywhere in the strip steers, including well outside the ring — the
+       ;; ring shows where centre is, it is not a target you have to hit.
+       (let [[dx dy] (offset-from-centre pad e)]
          (capture! pad e)
-         (reset! stick {:id (.-pointerId e) :ox x :oy y :dx 0.0 :dy 0.0})
+         (reset! stick {:id (.-pointerId e) :dx dx :dy dy})
          (render-stick!))))
     (.addEventListener
      pad "pointermove"
      (fn [e]
        (when (= (.-pointerId e) (:id @stick))
-         (let [[x y] (pad-xy pad e)
-               {:keys [ox oy]} @stick]
-           (swap! stick assoc :dx (- x ox) :dy (- y oy))
+         (let [[dx dy] (offset-from-centre pad e)]
+           (swap! stick assoc :dx dx :dy dy)
            (render-stick!)))))
     (doseq [event ["pointerup" "pointercancel"]]
       (.addEventListener pad event
@@ -93,9 +90,22 @@
       (.addEventListener pad event
                          (fn [e] (swap! fire-down disj (.-pointerId e)))))))
 
+(defn- size-ring!
+  "Draw the ring at exactly stick-max, so the rim really is full deflection.
+   Sizing it here rather than in the stylesheet keeps the picture and the number
+   from drifting apart."
+  []
+  (doseq [[id r] [["stick-base" control/stick-max]
+                  ["stick-knob" (/ control/stick-max 2.4)]]]
+    (let [style (.-style (el id))]
+      (set! (.-width style) (str (* 2 r) "px"))
+      (set! (.-height style) (str (* 2 r) "px")))))
+
 (defn init! []
   (when-not @started?
     (reset! started? true)
+    (size-ring!)
+    (render-stick!)
     (init-move-pad!)
     (init-fire-pad!)
     ;; A finger that leaves the window never sends pointerup, which would leave

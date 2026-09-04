@@ -150,6 +150,33 @@
     (is (pos? v1) "but never reaches zero — that is the inertia")
     (is (not (:thrusting? (:ship coasted))))))
 
+(deftest a-game-can-be-run-at-a-gentler-acceleration
+  ;; The touch controls aim for you, so they run at a lower figure. Everything
+  ;; else about the physics has to stay identical.
+  (let [gentle (/ game/thrust 2)
+        stock  (run (game/initial-state 1) 1 #{:thrust})
+        slower (run (game/with-thrust (game/initial-state 1) gentle) 1 #{:thrust})]
+    (is (< (speed-of (:ship slower)) (speed-of (:ship stock))))
+    (is (close? (speed-of (:ship slower))
+                (* (/ gentle game/drag) (- 1 (js/Math.exp (- game/drag))))
+                2.0)
+        "the same closed form, just with a smaller a")
+    (is (= (:angle (:ship slower)) (:angle (:ship stock)))
+        "turning is untouched")))
+
+(deftest a-restart-keeps-the-acceleration-it-was-played-at
+  (let [gentle  (/ game/thrust 2)
+        over    (-> (world-with [(still-asteroid :large 512 384)])
+                    (game/with-thrust gentle)
+                    (assoc :lives 1)
+                    (step no-input)
+                    (run 1 no-input))
+        pressed (step over #{:fire})]
+    (is (= :game-over (:phase over)))
+    (is (= :playing (:phase pressed)))
+    (is (= gentle (:thrust pressed))
+        "restarting must not quietly hand a touch player the keyboard figure")))
+
 (deftest speed-is-clamped
   (let [s (run (game/initial-state 1) 30 #{:thrust})]
     (is (close? (speed-of (:ship s)) game/max-speed 1e-6))))

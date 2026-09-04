@@ -8,9 +8,19 @@
 
 (def ^:const tau (* 2 js/Math.PI))
 
+;; Acceleration for touch play, handed to game/with-thrust. Lowered from the
+;; keyboard's 340 after the milestone 9 playtest on a phone: with the stick
+;; doing the aiming, the ship built up speed faster than a thumb could answer.
+;; Keyboard play is unchanged.
+(def ^:const thrust 260)            ; px/second²
+
 ;; Feel parameters. These want a playtest on a real device before they are
 ;; treated as settled — a mouse on a laptop is not a thumb on glass.
-(def ^:const stick-max 55)          ; px of drag for full deflection
+;; Distance from the ring's centre that counts as full deflection. The ring is
+;; drawn at exactly this radius (touch/init! sizes it from here), so the knob
+;; sitting on the rim means "pushed all the way". Reaching past the rim is fine
+;; and simply stays at full.
+(def ^:const stick-max 48)
 (def ^:const dead-zone 0.2)         ; fraction of full deflection that still counts as "no input"
 (def ^:const thrust-threshold 0.55) ; push past this and the engine lights
 (def ^:const thrust-align 0.9)      ; radians; only thrust when roughly facing where you pushed

@@ -144,6 +144,11 @@ max-speed    540   ; px/second
 `v *= exp(-drag·dt)` rather than a fixed per-frame multiplier, which is what
 decouples the handling from the frame rate.
 
+Touch play overrides `thrust` alone, with `control/thrust` (260, settled by the
+milestone 9 playtest on a phone). Everything else is shared. The feel parameters
+of the stick itself — `stick-max`, `dead-zone`, `thrust-threshold`,
+`thrust-align` — are the user's call in the same way.
+
 Controls: `←` `→` turn, `↑` thrust (or `A` / `D` / `W`), `space` to fire and to
 restart after game over, `M` to mute.
 
@@ -327,10 +332,16 @@ touch-shaped argument to `tick`** — anything new belongs in `control` instead.
 - `turn-epsilon` must stay above one frame of rotation (200°/s ÷ 60 = 3.33°) or
   the ship oscillates around the heading it is trying to hold. There is a test
   asserting exactly this
-- The stick's origin is **wherever the finger lands**, not a fixed base. On a
-  16:9 phone the strip is only ~87px wide, where a fixed base would be unusable
+- **The ring is a fixed landmark, not a stick that appears under the thumb**, so
+  direction is absolute: the offset is measured from the centre of the strip,
+  and touching near the top means up wherever the last touch was. Anywhere in
+  the strip steers — past the rim simply reads as full deflection, so the ring
+  shows where centre is rather than being a target you have to hit
+- `touch/size-ring!` sizes the ring from `control/stick-max`, so the drawn rim
+  really is full deflection and the picture cannot drift from the number
 - **Firing latches.** A tap that begins and ends between two frames would
   otherwise never be seen, since `game` fires on the rising edge of `:fire`
+- The bullet drawn in the fire strip is decoration; the whole strip fires
 - Pointer events and pointer ids throughout, never touch events: steering and
   firing must work with two thumbs at once. `setPointerCapture` is wrapped in a
   `try` — it is an enhancement, and a failure must not abort the handler
@@ -341,10 +352,13 @@ The strips live in the letterbox margin left by the 4:3 playfield, so they never
 cover the game. They have a 120px floor, so on a 16:9 device they overlap the
 very edge of the field rather than becoming too narrow to use.
 
-> The feel parameters (`stick-max`, `dead-zone`, `thrust-threshold`,
-> `thrust-align`) were chosen at a desk with a mouse. Like the milestone 2
-> handling values, they want a playtest on real glass before they are treated as
-> settled.
+**Touch play runs at `control/thrust`, not `game/thrust`.** Handed over by
+`game/with-thrust`, which puts the figure in the state; `update-ship` takes it
+as an argument rather than reading the var. Keyboard play is untouched. Two
+things follow: a restart after game over must carry the current `:thrust`
+across (`advance-phase` does, and there is a test), and nothing else about the
+physics is allowed to fork this way — one number, in the state, is the whole
+mechanism.
 
 ## Departures from the original
 
@@ -357,7 +371,7 @@ Keep this list current. Anything here is a decision, not a defect.
 | **Objects are mirrored across screen edges** | The original popped an object to the far side when its centre crossed. Mirroring makes a radius-42 rock look like it slides across rather than teleporting. Physics is unchanged — still centre-based wrap |
 | **The score uses `fillText`** | The original drew digits as vector strokes. Hand-drawn digit strokes would match, but that is separate work |
 | **No hyperspace** | Listed in the scope above but never built, and no milestone covered it. Still open |
-| **Touch mode aims for you** | The virtual stick names a heading and the ship turns to it, so touch play never asks you to line the nose up by hand. Inertia, drag and rotation speed are unchanged, but it is easier than the keyboard. The arcade cabinet had buttons, not a stick |
+| **Touch mode aims for you, and accelerates more gently** | The virtual stick names a heading and the ship turns to it, so touch play never asks you to line the nose up by hand, and it runs at `control/thrust` rather than `game/thrust`. Inertia, drag and rotation speed are unchanged. The arcade cabinet had buttons, not a stick |
 
 ## Line endings
 
