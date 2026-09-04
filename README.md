@@ -42,9 +42,10 @@ Touch, holding the device sideways: touch anywhere in the **left** strip to
 steer. Direction is read from the middle of the ring drawn there, so pushing
 towards the top of the strip means up — you can reach outside the ring, it marks
 the centre rather than being a target to hit. The ship turns to face where you
-push and thrusts once its nose comes round. Tap anywhere in the **right** strip
-to fire, and to start again after a game over. The strips sit in the black
-margins either side of the playfield, so they never cover the game.
+push and thrusts once its nose comes round. Tap anywhere in the **right** strip,
+marked with a crosshair, to fire and to start again after a game over. The
+strips sit in the black margins either side of the playfield, so they never
+cover the game, and there is a mute button in the top-right corner.
 
 Scoring follows the original: 20 points for a large asteroid, 50 for a medium,
 100 for a small, and an extra life every 10,000 points. You start with three

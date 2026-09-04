@@ -145,9 +145,9 @@ max-speed    540   ; px/second
 decouples the handling from the frame rate.
 
 Touch play overrides `thrust` alone, with `control/thrust` (260, settled by the
-milestone 9 playtest on a phone). Everything else is shared. The feel parameters
-of the stick itself — `stick-max`, `dead-zone`, `thrust-threshold`,
-`thrust-align` — are the user's call in the same way.
+user's playtest on a phone — **treat it like the four above**). Everything else
+is shared. The feel parameters of the stick itself — `stick-max`, `dead-zone`,
+`thrust-threshold`, `thrust-align` — are the user's call in the same way.
 
 Controls: `←` `→` turn, `↑` thrust (or `A` / `D` / `W`), `space` to fire and to
 restart after game over, `M` to mute.
@@ -341,7 +341,12 @@ touch-shaped argument to `tick`** — anything new belongs in `control` instead.
   really is full deflection and the picture cannot drift from the number
 - **Firing latches.** A tap that begins and ends between two frames would
   otherwise never be seen, since `game` fires on the rising edge of `:fire`
-- The bullet drawn in the fire strip is decoration; the whole strip fires
+- The crosshair drawn in the fire strip is decoration; the whole strip fires
+- Touch gets an on-screen **mute button**, since `M` is not available. It shares
+  one `body.muted` class with the key, so the two never disagree, and tapping it
+  calls `sound/init!` — on a phone it may well be the first thing pressed, and a
+  tap is the gesture the browser wants before audio can exist. Both corner
+  buttons sit above the strips, so a tap on one never reaches the pad and fires
 - Pointer events and pointer ids throughout, never touch events: steering and
   firing must work with two thumbs at once. `setPointerCapture` is wrapped in a
   `try` — it is an enhancement, and a failure must not abort the handler

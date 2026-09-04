@@ -9,8 +9,9 @@
 (def ^:const tau (* 2 js/Math.PI))
 
 ;; Acceleration for touch play, handed to game/with-thrust. Lowered from the
-;; keyboard's 340 after the milestone 9 playtest on a phone: with the stick
-;; doing the aiming, the ship built up speed faster than a thumb could answer.
+;; keyboard's 340 because with the stick doing the aiming, the ship built up
+;; speed faster than a thumb could answer. Settled by the user's playtest on a
+;; phone, so treat it like the milestone 2 values and leave it alone.
 ;; Keyboard play is unchanged.
 (def ^:const thrust 260)            ; px/second²
 

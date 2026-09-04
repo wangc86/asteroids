@@ -17,6 +17,13 @@
 ;; prompt you cannot see past.
 (defonce paused? (atom false))
 
+(defn- el-by-id [id] (js/document.getElementById id))
+
+(defn- apply-mute!
+  "Keep the on-screen button showing what the M key did, and vice versa."
+  [muted?]
+  (.toggle (.-classList js/document.body) "muted" muted?))
+
 ;; --- Drawing ----------------------------------------------------------------
 
 (defn- draw-ship-body! [ctx]
@@ -188,7 +195,7 @@
      ;; first key press is where audio comes to life.
      (sound/init!)
      (when (= "KeyM" (.-code e))
-       (sound/toggle-mute!))
+       (apply-mute! (sound/toggle-mute!)))
      (when-let [action (key->action (.-code e))]
        ;; Stop the arrow keys and space from scrolling the page.
        (.preventDefault e)
@@ -253,8 +260,6 @@
   (js/requestAnimationFrame frame!))
 
 ;; --- Page shell: choosing and remembering a control mode --------------------
-
-(defn- el-by-id [id] (js/document.getElementById id))
 
 (defn- url-mode []
   (.get (js/URLSearchParams. js/window.location.search) "mode"))
@@ -323,6 +328,13 @@
 (defn- init-shell! []
   (.addEventListener (el-by-id "choose-desktop") "click" #(choose! :desktop))
   (.addEventListener (el-by-id "choose-touch") "click" #(choose! :touch))
+  (.addEventListener (el-by-id "mute") "click"
+                     (fn []
+                       ;; This may well be the first thing a phone player taps,
+                       ;; and a tap is the gesture the browser wants before it
+                       ;; will let any audio exist at all.
+                       (sound/init!)
+                       (apply-mute! (sound/toggle-mute!))))
   ;; Switching mid-game is a big enough change to be worth confirming; a stray
   ;; tap on a phone should not throw away a run.
   (.addEventListener (el-by-id "switch-mode") "click"

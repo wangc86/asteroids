@@ -98,23 +98,47 @@
     .action:hover, .action:focus-visible { border-color: #fff; outline: none; }
     .action.primary { border-color: #fff; }
 
-    /* --- Mode switch ----------------------------------------------------- */
-    #switch-mode {
+    /* --- Corner buttons --------------------------------------------------- */
+    /* These sit above the touch strips, so a tap lands on the button and never
+       reaches the pad underneath. */
+    .corner-btn {
       position: fixed;
-      right: max(10px, env(safe-area-inset-right));
-      bottom: max(10px, env(safe-area-inset-bottom));
       z-index: 5;
+      display: none;
       width: 40px;
       height: 40px;
+      padding: 0;
       background: rgba(0, 0, 0, 0.55);
       color: #7a7a7a;
       border: 1px solid #3a3a3a;
       font: 18px/1 ui-monospace, monospace;
       cursor: pointer;
-      display: none;
     }
-    #switch-mode:hover { color: #fff; border-color: #fff; }
+    .corner-btn:hover { color: #fff; border-color: #fff; }
+    #switch-mode {
+      right: max(10px, env(safe-area-inset-right));
+      bottom: max(10px, env(safe-area-inset-bottom));
+    }
     body.mode-desktop #switch-mode, body.mode-touch #switch-mode { display: block; }
+
+    /* The keyboard has M; touch needs something to press. */
+    #mute {
+      top: max(10px, env(safe-area-inset-top));
+      right: calc(max(10px, env(safe-area-inset-right)) + 48px);
+    }
+    body.mode-touch #mute { display: block; }
+    #mute svg { width: 22px; height: 22px; vertical-align: middle; }
+    #mute .body { fill: currentColor; stroke: none; }
+    #mute .waves, #mute .slash {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+    }
+    #mute .slash { display: none; }
+    body.muted #mute .waves { display: none; }
+    body.muted #mute .slash { display: inline; }
+    body.muted #mute { color: #c86; }
 
     /* --- Rotate prompt (touch mode only) --------------------------------- */
     body.mode-touch.portrait #rotate { display: grid; }
@@ -174,15 +198,16 @@
       border: 2px solid rgba(255, 255, 255, 0.62);
     }
     .fire-icon {
-      width: 74px;
+      width: 78px;
+      fill: none;
       stroke: rgba(255, 255, 255, 0.62);
       stroke-width: 4;
       stroke-linecap: round;
-      fill: rgba(255, 255, 255, 0.62);
     }
+    .fire-icon .pip { fill: rgba(255, 255, 255, 0.62); stroke: none; }
 
-    /* Thumbs rest at the bottom, so in touch mode the switch button moves out
-       of reach of the fire strip. */
+    /* Thumbs rest at the bottom, so in touch mode the corner buttons move up
+       out of the way of the fire strip. */
     body.mode-touch #switch-mode {
       top: max(10px, env(safe-area-inset-top));
       bottom: auto;
@@ -227,19 +252,31 @@
     <div class="hint">MOVE</div>
   </div>
   <div id="pad-right" class="pad">
-    <!-- A shot drawn the way the game draws one — a small solid square — with a
-         trail behind it, so it reads as a bullet in the same line-art style.
+    <!-- A crosshair, drawn in strokes like everything else on screen.
          Decoration only: the whole strip fires, not just the icon. -->
-    <svg class="fire-icon" viewBox="0 0 100 124" aria-hidden="true">
-      <rect x="41" y="12" width="18" height="18" stroke="none"/>
-      <line x1="50" y1="52" x2="50" y2="112"/>
-      <line x1="27" y1="62" x2="27" y2="100"/>
-      <line x1="73" y1="62" x2="73" y2="100"/>
+    <svg class="fire-icon" viewBox="0 0 100 100" aria-hidden="true">
+      <circle cx="50" cy="50" r="30"/>
+      <line x1="50" y1="4"  x2="50" y2="30"/>
+      <line x1="50" y1="70" x2="50" y2="96"/>
+      <line x1="4"  y1="50" x2="30" y2="50"/>
+      <line x1="70" y1="50" x2="96" y2="50"/>
+      <circle class="pip" cx="50" cy="50" r="4"/>
     </svg>
     <div class="hint">FIRE</div>
   </div>
 
-  <button id="switch-mode" title="Switch control mode">⇄</button>
+  <button id="mute" class="corner-btn" title="Mute">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <polygon class="body" points="3,9 7.5,9 12,4.5 12,19.5 7.5,15 3,15"/>
+      <g class="waves">
+        <path d="M15.5 9.2a4 4 0 0 1 0 5.6"/>
+        <path d="M18.3 6.6a8 8 0 0 1 0 10.8"/>
+      </g>
+      <line class="slash" x1="15.5" y1="8.5" x2="21" y2="15.5"/>
+    </svg>
+  </button>
+
+  <button id="switch-mode" class="corner-btn" title="Switch control mode">⇄</button>
 
   <div id="switch-confirm" class="overlay">
     <p class="subtitle" id="switch-question">Switch control mode?</p>
