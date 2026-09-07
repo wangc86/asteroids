@@ -733,6 +733,69 @@
     (is (some #{:ship-explode} (:events dead)))
     (is (= (inc game/start-lives) (:lives life)))))
 
+;; --- Hyperspace -------------------------------------------------------------
+
+(defn- ship-xy [state] [(get-in state [:ship :x]) (get-in state [:ship :y])])
+
+;; open-space, not an empty field: clearing the last rock ends the level, and
+;; hyperspace is refused outside :playing.
+(deftest hyperspace-moves-the-ship-and-stops-it-dead
+  (let [before (-> (world-with []) (open-space) (run 1 #{:thrust}))
+        after  (step before #{:hyperspace})]
+    (is (not= (ship-xy before) (ship-xy after)) "it went somewhere else")
+    (is (<= 0 (get-in after [:ship :x]) game/world-w))
+    (is (<= 0 (get-in after [:ship :y]) game/world-h))
+    (is (pos? (speed-of (:ship before))) "it was moving beforehand")
+    (is (zero? (speed-of (:ship after))) "and arrives at a standstill")
+    (is (= (get-in before [:ship :angle]) (get-in after [:ship :angle]))
+        "the heading is kept — only where you are changes")
+    (is (some #{:hyperspace} (:events after)))))
+
+(deftest hyperspace-is-one-jump-per-press
+  (let [s      (open-space (world-with []))
+        tapped (-> s (step #{:hyperspace}) (step no-input) (step #{:hyperspace}))]
+    (is (= 1 (count (filter #{:hyperspace} (events-during s 1 #{:hyperspace}))))
+        "holding the key jumps once, not sixty times")
+    (is (some #{:hyperspace} (:events tapped))
+        "releasing and pressing again jumps a second time")))
+
+(deftest hyperspace-has-no-safety-net
+  ;; The whole point: no clear-area check and no invulnerability, so a jump can
+  ;; drop you straight onto a rock. Search the seeds for one that does, and
+  ;; check it kills rather than being quietly ignored.
+  (let [field  (fn [seed]
+                 (let [[rocks s] (game/spawn-wave seed (game/asteroids-for-level 5))]
+                   ;; Drift the wave off the edges while untouchable, then drop
+                   ;; the shield, so the only thing that can kill is the jump.
+                   (-> (world-with rocks)
+                       (assoc :seed s :invuln 9999.0)
+                       (run 3 no-input)
+                       (assoc :invuln 0.0))))
+        deaths (count (filter (fn [i]
+                                (let [jumped (step (field (bit-or 1 (* i 2654435761)))
+                                                   #{:hyperspace})]
+                                  (= :dead (:phase jumped))))
+                              (range 60)))]
+    (is (pos? deaths)
+        (str "a jump into a crowded field must sometimes be fatal; " deaths " of 60 were"))
+    (is (< deaths 60) "but not always, or it would be useless")))
+
+(deftest hyperspace-is-reproducible
+  (let [jump #(step (open-space (world-with [])) #{:hyperspace})]
+    (is (= (ship-xy (jump)) (ship-xy (jump)))
+        "same seed, same destination — the randomness still goes through :seed")))
+
+(deftest hyperspace-only-works-while-playing
+  (let [dead (-> (world-with [(still-asteroid :large 512 384)]) (step no-input))
+        moved (step dead #{:hyperspace})]
+    (is (= :dead (:phase dead)))
+    (is (= (ship-xy dead) (ship-xy moved)) "no escaping from the grave"))
+  (let [over (-> (world-with [(still-asteroid :large 512 384)])
+                 (assoc :lives 1)
+                 (step no-input))]
+    (is (= :game-over (:phase over)))
+    (is (empty? (filter #{:hyperspace} (:events (step over #{:hyperspace})))))))
+
 ;; --- End to end -------------------------------------------------------------
 
 (deftest the-whole-game-is-deterministic

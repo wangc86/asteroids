@@ -210,8 +210,9 @@
       :ufo             nil
       :ufo-timer       ufo-delay-max     ; the first saucer never arrives immediately
       ;; One shot per press rather than auto-fire, so we remember whether the
-      ;; key was already down last frame.
+      ;; key was already down last frame. Hyperspace works the same way.
       :fire-held?      false
+      :hyperspace-held? false
       :score           0
       :lives           start-lives
       :level           1
@@ -344,6 +345,35 @@
            (fire-edge? state inputs)
            (< (count (:bullets state)) max-bullets))
     (fire-bullet state)
+    state))
+
+;; --- Hyperspace -------------------------------------------------------------
+
+(defn- maybe-hyperspace
+  "The panic button: vanish and come back somewhere random, at a standstill.
+
+   Deliberately the opposite of a respawn. There is **no** clear-area check and
+   **no** invulnerability, so you can and will sometimes materialise inside a
+   rock — that gamble is the whole point, and the reason it is a last resort
+   rather than a free escape. It runs before collisions are resolved, so a bad
+   landing kills you on the very frame you arrive.
+
+   One jump per press, like firing."
+  [state inputs]
+  (if (and (playing? state)
+           (boolean (inputs :hyperspace))
+           (not (:hyperspace-held? state)))
+    (let [[rs seed] (rand-n (:seed state) 2)]
+      (-> state
+          (assoc :seed seed)
+          ;; The heading is kept; only where you are and how fast changes.
+          (update :ship assoc
+                  :x          (* (nth rs 0) world-w)
+                  :y          (* (nth rs 1) world-h)
+                  :vx         0.0
+                  :vy         0.0
+                  :thrusting? false)
+          (emit :hyperspace)))
     state))
 
 ;; --- Collisions and splitting -----------------------------------------------
@@ -758,6 +788,8 @@
       (update :timer #(max 0.0 (- % dt)))
       (cond-> (playing? state) (-> (update :ship update-ship dt inputs (:thrust state))
                                    (update :level-t + dt)))
+      ;; Before collisions are resolved, so a bad landing kills you at once.
+      (maybe-hyperspace inputs)
       (update :asteroids (fn [as] (mapv #(drift % dt) as)))
       (advance-ufo dt)
       (maybe-spawn-ufo)
@@ -770,4 +802,5 @@
       (check-level-clear)
       (advance-phase inputs)
       ;; Record the key state last, so every edge test above saw the same frame.
-      (assoc :fire-held? (boolean (inputs :fire)))))
+      (assoc :fire-held?       (boolean (inputs :fire))
+             :hyperspace-held? (boolean (inputs :hyperspace)))))

@@ -242,9 +242,11 @@
 
 ;; .-code rather than .-key, so a different keyboard layout does not break it.
 (def key->action
-  {"ArrowLeft"  :left   "KeyA"  :left
-   "ArrowRight" :right  "KeyD"  :right
-   "ArrowUp"    :thrust "KeyW"  :thrust
+  {"ArrowLeft"  :left       "KeyA" :left
+   "ArrowRight" :right      "KeyD" :right
+   "ArrowUp"    :thrust     "KeyW" :thrust
+   ;; The one arrow the ship has no use for, plus the letter under the same hand
+   "ArrowDown"  :hyperspace "KeyS" :hyperspace
    "Space"      :fire})
 
 (defn- init-input! []

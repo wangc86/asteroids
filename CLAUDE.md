@@ -149,8 +149,8 @@ user's playtest on a phone — **treat it like the four above**). Everything els
 is shared. The feel parameters of the stick itself — `stick-max`, `dead-zone`,
 `thrust-threshold`, `thrust-align` — are the user's call in the same way.
 
-Controls: `←` `→` turn, `↑` thrust (or `A` / `D` / `W`), `space` to fire and to
-restart after game over, `M` to mute.
+Controls: `←` `→` turn, `↑` thrust (or `A` / `D` / `W`), `↓` or `S` for
+hyperspace, `space` to fire and to restart after game over, `M` to mute.
 
 ## Asteroids (milestone 3)
 
@@ -373,6 +373,8 @@ touch-shaped argument to `tick`** — anything new belongs in `control` instead.
 - **Firing latches.** A tap that begins and ends between two frames would
   otherwise never be seen, since `game` fires on the rising edge of `:fire`
 - The crosshair drawn in the fire strip is decoration; the whole strip fires
+- `HYPER` sits at the top of the MOVE strip: within reach of the steering thumb,
+  and nowhere near where the other one is tapping to fire
 - Touch gets an on-screen **mute button**, since `M` is not available. It shares
   one `body.muted` class with the key, so the two never disagree, and tapping it
   calls `sound/init!` — on a phone it may well be the first thing pressed, and a
@@ -402,6 +404,32 @@ across (`advance-phase` does, and there is a test), and nothing else about the
 physics is allowed to fork this way — one number, in the state, is the whole
 mechanism.
 
+## Hyperspace (milestone 10)
+
+The panic button: vanish and reappear somewhere random, at a standstill, keeping
+your heading. `↓` or `S` on a keyboard, the `HYPER` button on touch.
+
+**It is deliberately the opposite of a respawn.** No clear-area check, no
+invulnerability — you can and will sometimes materialise inside a rock, and that
+gamble is the entire point. Take either away and it becomes a free escape, which
+would gut the tension the rest of the game is built on. `maybe-hyperspace` runs
+**before collisions are resolved**, so a bad landing kills you on the frame you
+arrive rather than a frame later.
+
+- One jump per press, edge-triggered off `:hyperspace-held?`, the same way
+  firing works. No cooldown: landing at random is its own deterrent, and a
+  cooldown would be a rule the original did not have
+- Only during `:playing` — no escaping from `:dead` or `:game-over`
+- The destination comes from `:seed` like everything else, so a seeded game
+  still replays exactly
+- On touch the button is a **sibling** of the strips, not a child: a child's
+  `pointerdown` would bubble into the pad underneath and steer as well as jump.
+  There is a test that pressing it produces `:hyperspace` and nothing else
+
+> I did not add a chance of the ship simply exploding on re-entry. Some accounts
+> of the original describe one, but I could not confirm it, and inventing a
+> death the player cannot see coming seemed worse than leaving it out.
+
 ## Departures from the original
 
 Keep this list current. Anything here is a decision, not a defect.
@@ -412,7 +440,6 @@ Keep this list current. Anything here is a decision, not a defect.
 | **Asteroid outlines are generated** | The original reused a few hand-drawn shapes at three scales; `make-asteroid` builds a fresh 12-vertex polygon per rock |
 | **Objects are mirrored across screen edges** | The original popped an object to the far side when its centre crossed. Mirroring makes a radius-42 rock look like it slides across rather than teleporting. Physics is unchanged — still centre-based wrap |
 | **The score uses `fillText`** | The original drew digits as vector strokes. Hand-drawn digit strokes would match, but that is separate work |
-| **No hyperspace** | Listed in the scope above but never built, and no milestone covered it. Still open |
 | **Touch mode aims for you, and accelerates more gently** | The virtual stick names a heading and the ship turns to it, so touch play never asks you to line the nose up by hand, and it runs at `control/thrust` rather than `game/thrust`. Inertia, drag and rotation speed are unchanged. The arcade cabinet had buttons, not a stick |
 
 ## Line endings
@@ -435,7 +462,7 @@ One commit per milestone, and each one must show a visible result in the browser
 - [x] 7. Deployment: `shadow-cljs release` + GitHub Pages
 - [x] 8. Control modes: device chooser, remembered choice, portrait handling
 - [x] 9. Touch controls: virtual stick on the left, tap to fire on the right
-- [ ] 10. Hyperspace (still missing from the original's feature list)
+- [x] 10. Hyperspace: the panic button, with no safety net
 
 ## Working agreement
 

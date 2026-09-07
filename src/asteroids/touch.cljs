@@ -12,6 +12,7 @@
 (defonce stick (atom nil))        ; {:id :dx :dy}, pixels from the ring's centre
 (defonce fire-down (atom #{}))    ; pointer ids currently held in the fire zone
 (defonce fire-latch (atom false)) ; a tap seen since the last frame
+(defonce hyper-latch (atom false))
 (defonce started? (atom false))
 
 (defn- el [id] (js/document.getElementById id))
@@ -101,6 +102,17 @@
       (set! (.-width style) (str (* 2 r) "px"))
       (set! (.-height style) (str (* 2 r) "px")))))
 
+(defn- init-hyper-button!
+  "A sibling of the strips, not a child: a child's pointerdown would bubble to
+   the pad underneath and steer the ship as well as jumping."
+  []
+  (.addEventListener (el "hyper") "pointerdown"
+                     (fn [e]
+                       (.preventDefault e)
+                       ;; One jump per press. Holding the button does nothing
+                       ;; more, since only pointerdown sets this.
+                       (reset! hyper-latch true))))
+
 (defn init! []
   (when-not @started?
     (reset! started? true)
@@ -108,21 +120,27 @@
     (render-stick!)
     (init-move-pad!)
     (init-fire-pad!)
+    (init-hyper-button!)
     ;; A finger that leaves the window never sends pointerup, which would leave
     ;; the ship thrusting forever.
     (js/window.addEventListener "blur"
                                 (fn [_]
                                   (release-stick!)
-                                  (reset! fire-down #{})))))
+                                  (reset! fire-down #{})
+                                  (reset! hyper-latch false)))))
 
 (defn take-inputs!
   "The actions the fingers are asking for this frame, in the same vocabulary the
    keyboard uses. Consumes the tap latch, hence the bang."
   [ship-angle]
   (let [fire?  (or @fire-latch (seq @fire-down))
+        hyper? @hyper-latch
         moving (if-let [{:keys [dx dy]} @stick]
                  (let [[sx sy] (control/stick-vector dx dy)]
                    (control/stick->inputs ship-angle sx sy))
                  #{})]
     (reset! fire-latch false)
-    (cond-> moving fire? (conj :fire))))
+    (reset! hyper-latch false)
+    (cond-> moving
+      fire?  (conj :fire)
+      hyper? (conj :hyperspace))))

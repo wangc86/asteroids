@@ -137,6 +137,8 @@
       :bang-ufo    (bang! 1100 0.50 0.55)
       :ship-explode (bang! 700 0.90 0.65)
       :extra-life  (tone! "triangle" 660 1320 0.35 0.22)
+      ;; A long fall: the ship dropping out of the world.
+      :hyperspace  (tone! "sine" 1400 90 0.42 0.24)
       ;; The heartbeat: two thumps a whole tone apart, exactly as low as the
       ;; original's.
       :beat-a      (tone! "triangle" 70 55 0.16 0.5)

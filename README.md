@@ -35,6 +35,7 @@ Keyboard:
 |---|---|
 | `←` `→` or `A` `D` | Turn |
 | `↑` or `W` | Thrust |
+| `↓` or `S` | Hyperspace |
 | `Space` | Fire, and restart after game over |
 | `M` | Mute |
 
@@ -45,7 +46,8 @@ the centre rather than being a target to hit. The ship turns to face where you
 push and thrusts once its nose comes round. Tap anywhere in the **right** strip,
 marked with a crosshair, to fire and to start again after a game over. The
 strips sit in the black margins either side of the playfield, so they never
-cover the game, and there is a mute button in the top-right corner.
+cover the game. `HYPER` at the top of the left strip is hyperspace, and there is
+a mute button in the top-right corner.
 
 Scoring follows the original: 20 points for a large asteroid, 50 for a medium,
 100 for a small, and an extra life every 10,000 points. You start with three
@@ -59,9 +61,15 @@ for the rocks they clear.
 
 Saucers fly the original's zig-zag — straight legs, sharp turns.
 
+When there is nowhere left to turn, hyperspace throws the ship to a random spot
+on the screen and stops it dead. There is no safety net: you might come back in
+open space, or inside a rock. That gamble is the point — it is the move you make
+when the alternative is certain.
+
 Every sound is synthesised in code — there are no audio files. Browsers will not
 start audio without a user gesture, so the first key you press is what switches
-it on.
+it on. On touch the game starts muted, and the button in the top-right corner
+turns the sound on.
 
 ## Where this differs from the original
 
@@ -76,9 +84,6 @@ deliberate change, and it makes saucers meaningfully harder to be rid of.
 **Asteroid outlines are generated, not drawn.** The original had a handful of
 hand-drawn rock shapes reused at three scales; here each rock is a fresh
 12-vertex polygon with jittered radii, so no two are alike.
-
-**No hyperspace.** The original's panic button — vanish and reappear somewhere
-random, possibly on top of a rock — is not implemented.
 
 **The score uses a normal monospace font**, where the original drew its digits
 as vector strokes like everything else.
@@ -98,9 +103,9 @@ one shot per press — holding the key down does not auto-fire.
 ## Status
 
 Complete and deployed: ship handling, asteroids, shooting and splitting,
-scoring, lives, level progression, invulnerable respawns, both saucers, and the
-synthesised sound including the heartbeat that speeds up as a level wears on.
-Hyperspace is the one part of the original still missing.
+scoring, lives, level progression, invulnerable respawns, both saucers,
+hyperspace, and the synthesised sound including the heartbeat that speeds up as
+a level wears on. Everything on the original's feature list is in.
 
 ## How it is built
 

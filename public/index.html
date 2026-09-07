@@ -132,6 +132,31 @@
     }
     body.mode-desktop #switch-mode, body.mode-touch #switch-mode { display: block; }
 
+    /* Hyperspace lives at the top of the MOVE strip: reachable by the steering
+       thumb, but nowhere near where the other one is tapping to fire. Like the
+       corner buttons it is a sibling of the strips, so a press cannot bubble
+       into steering. */
+    #hyper {
+      position: fixed;
+      z-index: 5;
+      display: none;
+      top: max(10px, env(safe-area-inset-top));
+      left: max(10px, env(safe-area-inset-left));
+      width: 96px;
+      height: 42px;
+      padding: 0;
+      background: rgba(0, 0, 0, 0.55);
+      color: #9a9a9a;
+      border: 1px solid #3a3a3a;
+      font: 700 13px/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+      letter-spacing: 0.18em;
+      text-indent: 0.18em;
+      cursor: pointer;
+      touch-action: none;
+    }
+    #hyper:active { color: #fff; border-color: #fff; }
+    body.mode-touch:not(.portrait) #hyper { display: block; }
+
     /* The keyboard has M; touch needs something to press. */
     #mute {
       top: max(10px, env(safe-area-inset-top));
@@ -236,7 +261,7 @@
       <button class="choice" id="choose-desktop">
         <div class="icon">⌨</div>
         <div class="what">PC / laptop</div>
-        <div class="how">Arrow keys and space</div>
+        <div class="how">Arrows, space, S for hyperspace</div>
       </button>
       <button class="choice" id="choose-touch">
         <div class="icon">📱</div>
@@ -275,6 +300,8 @@
     </svg>
     <div class="hint">FIRE</div>
   </div>
+
+  <button id="hyper" title="Hyperspace">HYPER</button>
 
   <button id="mute" class="corner-btn" title="Mute">
     <svg viewBox="0 0 24 24" aria-hidden="true">
