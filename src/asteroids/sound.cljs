@@ -167,9 +167,16 @@
         (.setValueAtTime (.-frequency osc) (if (= :small size) 190 115) (now)))
       (ramp-gain! (.-gain gain) (if (and size (not @muted?)) 0.09 0.0)))))
 
-(defn toggle-mute! []
-  (swap! muted? not)
+(defn set-muted!
+  "Returns the new state, so the caller can put the button in step with it."
+  [on?]
+  (reset! muted? (boolean on?))
   (when @muted?
+    ;; The continuous voices are gain ramps rather than events, so they have to
+    ;; be told; the one-shots simply stop being played.
     (thruster! false)
     (saucer! nil))
   @muted?)
+
+(defn toggle-mute! []
+  (set-muted! (not @muted?)))

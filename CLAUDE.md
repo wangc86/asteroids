@@ -378,6 +378,12 @@ touch-shaped argument to `tick`** — anything new belongs in `control` instead.
   calls `sound/init!` — on a phone it may well be the first thing pressed, and a
   tap is the gesture the browser wants before audio can exist. Both corner
   buttons sit above the strips, so a tap on one never reaches the pad and fires
+- **Touch play starts genuinely muted**, via `sound/set-muted!` in
+  `start-game!`. A phone has no keyboard, so nothing sets the audio going until
+  something is tapped, and a button reading "sound on" over a silent game is a
+  lie. Note it must be the real state and not just the icon: drawing the muted
+  icon while `muted?` stayed false would invert the two on the very first tap.
+  Desktop is unaffected — the first keypress starts the audio there anyway
 - Pointer events and pointer ids throughout, never touch events: steering and
   firing must work with two thumbs at once. `setPointerCapture` is wrapped in a
   `try` — it is an enhancement, and a failure must not abort the handler

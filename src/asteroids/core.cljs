@@ -21,9 +21,14 @@
 (defn- el-by-id [id] (js/document.getElementById id))
 
 (defn- apply-mute!
-  "Keep the on-screen button showing what the M key did, and vice versa."
+  "Keep the on-screen button showing what the M key did, and vice versa.
+   Returns the state it was given, so callers can pass a set-muted! result
+   straight through."
   [muted?]
-  (.toggle (.-classList js/document.body) "muted" muted?))
+  (.toggle (.-classList js/document.body) "muted" muted?)
+  (when-let [btn (el-by-id "mute")]
+    (.setAttribute btn "title" (if muted? "Sound off - tap to enable" "Mute")))
+  muted?)
 
 ;; --- Drawing ----------------------------------------------------------------
 
@@ -361,6 +366,12 @@
     (.add classes (str "mode-" (mode/->str m))))
   (show! "chooser" false)
   (watch-orientation!)
+  ;; Touch play starts silent. A phone has no keyboard, so nothing would set the
+  ;; audio going until something is tapped, and a button reading "sound on" over
+  ;; a silent game is a lie. Starting genuinely muted — rather than only drawing
+  ;; the icon that way — is what keeps the first tap from inverting the two.
+  (when (= :touch m)
+    (apply-mute! (sound/set-muted! true)))
   (when (nil? @state)
     (reset! state (cond-> (game/initial-state)
                     ;; The stick aims for you, so touch play runs gentler.
