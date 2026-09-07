@@ -343,6 +343,15 @@ game.
 - Touch mode plus portrait sets `body.portrait`, which shows the rotate prompt,
   and sets `paused?` so the game is not quietly killing you behind it. `frame!`
   still draws while paused, but does not tick and silences the continuous sounds
+- **Desktop stops at a controls card before the first frame** (`show-controls!`),
+  because the keys are named nowhere else — touch labels its strips, desktop has
+  nothing. Any key or click starts play, which is also the gesture the browser
+  wants before audio can exist, so a returning player no longer arrives in a
+  silent game. `begin-play!` is split out of `start-game!` for this: the loop and
+  the input listeners must not start until the card is gone, or keys pressed to
+  dismiss it would pile up in `keys-down`
+- The dismissal handler deliberately does **not** `preventDefault`. The page
+  cannot scroll anyway, and swallowing every keydown would take Ctrl+R with it
 
 ## Touch controls (milestone 9)
 
@@ -422,6 +431,14 @@ arrive rather than a frame later.
 - Only during `:playing` — no escaping from `:dead` or `:game-over`
 - The destination comes from `:seed` like everything else, so a seeded game
   still replays exactly
+- **On arrival the ship is drawn solid gold for `hyper-glow-time`** (0.8 s), so
+  you can find it again after being thrown somewhere unexpected. It is only a
+  colour — `:hyper-glow` counts down in `tick` and nothing else reads it, so
+  collisions, physics and invulnerability are all untouched. Keep it under a
+  second, or the marked ship becomes how the ship normally looks
+- `draw-ship!` sets the gold inside its `save`/`restore` pair, which is what
+  stops the colour leaking into the HUD drawn after it. There is a check for
+  exactly that
 - On touch the button is a **sibling** of the strips, not a child: a child's
   `pointerdown` would bubble into the pad underneath and steer as well as jump.
   There is a test that pressing it produces `:hyperspace` and nothing else

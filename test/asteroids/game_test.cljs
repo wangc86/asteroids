@@ -780,6 +780,25 @@
         (str "a jump into a crowded field must sometimes be fatal; " deaths " of 60 were"))
     (is (< deaths 60) "but not always, or it would be useless")))
 
+(deftest a-jump-marks-the-ship-briefly
+  (let [s      (open-space (world-with []))
+        jumped (step s #{:hyperspace})]
+    (is (zero? (:hyper-glow s)) "nothing to mark before a jump")
+    (is (pos? (:hyper-glow jumped)) "the ship is marked on arrival")
+    (is (< game/hyper-glow-time 1.0)
+        "and only briefly — it must not become how the ship normally looks")
+    (is (zero? (:hyper-glow (run jumped (+ game/hyper-glow-time 0.1) no-input)))
+        "then it is over")
+    (is (pos? (:hyper-glow (run jumped (* 0.5 game/hyper-glow-time) no-input)))
+        "but not before its time"))
+  (testing "it is a marker, not a shield"
+    ;; Same seed, same everything: the jump must not change where the ship goes
+    ;; or how it behaves, only how it is drawn.
+    (let [glowing (-> (open-space (world-with [])) (step #{:hyperspace}))
+          later   (run glowing 0.3 #{:thrust})]
+      (is (pos? (speed-of (:ship later))) "it still accelerates normally")
+      (is (zero? (:invuln later)) "and it is not invulnerable while marked"))))
+
 (deftest hyperspace-is-reproducible
   (let [jump #(step (open-space (world-with [])) #{:hyperspace})]
     (is (= (ship-xy (jump)) (ship-xy (jump)))

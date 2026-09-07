@@ -97,6 +97,32 @@
 
     .note { margin: 0; max-width: 34em; color: #6a6a6a; font-size: 13px; }
 
+    /* --- Controls card (desktop only) ------------------------------------ */
+    .keys {
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 12px 26px;
+      align-items: center;
+      text-align: left;
+    }
+    .keys dt { display: flex; gap: 6px; justify-self: end; }
+    .keys dd { margin: 0; color: #b4b4b4; }
+    .key {
+      display: inline-block;
+      min-width: 2.1em;
+      padding: 5px 9px;
+      background: #000;
+      border: 1px solid #6a6a6a;
+      border-radius: 3px;
+      font-size: 14px;
+      line-height: 1;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .blink { animation: blink 1.4s steps(1, end) infinite; }
+    @keyframes blink { 50% { opacity: 0.25; } }
+    @media (prefers-reduced-motion: reduce) { .blink { animation: none; } }
+
     .actions { display: flex; gap: 14px; }
     .action {
       padding: 12px 22px;
@@ -273,6 +299,29 @@
       Your choice is remembered. You can change it later with the button in the
       bottom-right corner.
     </p>
+  </div>
+
+  <!-- Shown before the first frame in desktop mode. Dismissing it is also the
+       user gesture the browser wants before it will allow any audio. -->
+  <div id="controls" class="overlay">
+    <h1 class="title">ASTEROIDS</h1>
+    <dl class="keys">
+      <dt><span class="key">←</span><span class="key">→</span></dt>
+      <dd>Turn</dd>
+      <dt><span class="key">↑</span></dt>
+      <dd>Thrust</dd>
+      <dt><span class="key">Space</span></dt>
+      <dd>Fire</dd>
+      <dt><span class="key">↓</span><span class="key">S</span></dt>
+      <dd>Hyperspace — jump somewhere random, at your own risk</dd>
+      <dt><span class="key">M</span></dt>
+      <dd>Mute</dd>
+    </dl>
+    <p class="note">
+      Shoot the rocks; each one breaks into smaller, faster ones. The screen
+      wraps on every edge, and so do you.
+    </p>
+    <p class="subtitle blink" id="start-hint">PRESS ANY KEY TO START</p>
   </div>
 
   <!-- Asked for when a phone is held upright in touch mode. -->

@@ -25,8 +25,9 @@ npx shadow-cljs watch app
 
 Then open <http://localhost:8080>.
 
-The first time you visit, the page asks whether you are on a PC or a phone, and
-remembers the answer. The button in the bottom-right corner changes it later.
+On a PC the keys are laid out on a card before the first frame; press anything
+to start. The first time you visit, the page asks whether you are on a PC or a
+phone, and remembers the answer. The button in the bottom-right corner changes it later.
 You can also link straight into a mode with `?mode=desktop` or `?mode=touch`.
 
 Keyboard:
@@ -64,7 +65,8 @@ Saucers fly the original's zig-zag — straight legs, sharp turns.
 When there is nowhere left to turn, hyperspace throws the ship to a random spot
 on the screen and stops it dead. There is no safety net: you might come back in
 open space, or inside a rock. That gamble is the point — it is the move you make
-when the alternative is certain.
+when the alternative is certain. The ship comes back solid gold for a moment so
+you can find it again; that is only a colour, and nothing about it protects you.
 
 Every sound is synthesised in code — there are no audio files. Browsers will not
 start audio without a user gesture, so the first key you press is what switches

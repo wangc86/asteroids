@@ -55,6 +55,10 @@
 (def ^:const extra-life-every 10000)
 (def ^:const ship-radius 11)              ; collision circle, a little smaller than
                                           ; the hull so deaths never feel unfair
+;; After a jump the ship is drawn solid gold for this long, so you can find it
+;; again before it matters. Under a second on purpose — long enough to catch the
+;; eye, short enough that it never becomes the way the ship normally looks.
+(def ^:const hyper-glow-time 0.8)         ; seconds
 (def ^:const respawn-delay 2.0)           ; seconds of blank between death and respawn
 (def ^:const invuln-time 3.0)             ; seconds of invulnerability after appearing
 (def ^:const respawn-clear-radius 90)     ; the respawn point must be clear this far out
@@ -225,6 +229,7 @@
       :phase           :playing
       :timer           0.0        ; countdown for the current phase; all phases share it
       :invuln          invuln-time
+      :hyper-glow      0.0        ; counts down while the ship is drawn gold
       :thrust          thrust     ; overridable per game; see with-thrust
       :events          []         ; sound events for this frame, consumed by core
       :seed            seed
@@ -365,7 +370,10 @@
            (not (:hyperspace-held? state)))
     (let [[rs seed] (rand-n (:seed state) 2)]
       (-> state
-          (assoc :seed seed)
+          ;; Coming back somewhere random is disorienting, so the ship is drawn
+          ;; solid gold briefly. It is only a colour: nothing about the physics
+          ;; or the collisions changes while it glows.
+          (assoc :seed seed :hyper-glow hyper-glow-time)
           ;; The heading is kept; only where you are and how fast changes.
           (update :ship assoc
                   :x          (* (nth rs 0) world-w)
@@ -785,6 +793,7 @@
       (assoc :events [])          ; last frame's sounds have already been played
       (update :t + dt)
       (update :invuln #(max 0.0 (- % dt)))
+      (update :hyper-glow #(max 0.0 (- % dt)))
       (update :timer #(max 0.0 (- % dt)))
       (cond-> (playing? state) (-> (update :ship update-ship dt inputs (:thrust state))
                                    (update :level-t + dt)))

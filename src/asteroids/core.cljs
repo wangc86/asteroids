@@ -32,13 +32,19 @@
 
 ;; --- Drawing ----------------------------------------------------------------
 
-(defn- draw-ship-body! [ctx]
+;; What the ship looks like for the moment after a hyperspace jump: solid, so it
+;; can be picked out of a field of white outlines at a glance.
+(def ^:const hyper-fill "#f5b921")
+(def ^:const hyper-stroke "#ffdf80")
+
+(defn- draw-ship-body! [ctx fill?]
   (.beginPath ctx)
   (.moveTo ctx game/ship-nose 0)
   (.lineTo ctx game/ship-tail game/ship-half-width)
   (.lineTo ctx game/ship-notch 0)
   (.lineTo ctx game/ship-tail (- game/ship-half-width))
   (.closePath ctx)
+  (when fill? (.fill ctx))
   (.stroke ctx))
 
 (defn- draw-flame! [ctx]
@@ -48,11 +54,14 @@
   (.lineTo ctx (- game/ship-notch 1) -4)
   (.stroke ctx))
 
-(defn- draw-ship! [ctx ship t x y]
-  (.save ctx)
+(defn- draw-ship! [ctx ship t x y glow?]
+  (.save ctx)          ; save/restore covers the colours, so the HUD is unaffected
   (.translate ctx x y)
   (.rotate ctx (:angle ship))
-  (draw-ship-body! ctx)
+  (when glow?
+    (set! (.-fillStyle ctx) hyper-fill)
+    (set! (.-strokeStyle ctx) hyper-stroke))
+  (draw-ship-body! ctx glow?)
   ;; The flame blinks 10 times a second: like the original, thrust is shown by
   ;; flicker rather than a steady flame.
   (when (and (:thrusting? ship) (< (mod (* t 20) 2) 1))
@@ -186,7 +195,7 @@
   (.translate ctx x y)
   (.rotate ctx (- (/ js/Math.PI 2)))     ; point up
   (.scale ctx (* 0.7 scale) (* 0.7 scale))
-  (draw-ship-body! ctx)
+  (draw-ship-body! ctx false)
   (.restore ctx))
 
 (defn- draw-hud! [ctx {:keys [score lives phase]}]
@@ -218,7 +227,7 @@
   (and (#{:playing :next-level} phase)
        (or (zero? invuln) (< (mod (* t 8) 2) 1))))
 
-(defn draw! [ctx {:keys [ship asteroids bullets ufo t] :as state}]
+(defn draw! [ctx {:keys [ship asteroids bullets ufo t hyper-glow] :as state}]
   (.clearRect ctx 0 0 game/world-w game/world-h)
   (set! (.-strokeStyle ctx) "#fff")
   (set! (.-fillStyle ctx) "#fff")
@@ -234,8 +243,9 @@
     (draw-wrapped! ctx (:x ufo) (:y ufo) (game/ufo-radius (:size ufo))
                    (fn [x y] (draw-ufo! ctx (:size ufo) x y))))
   (when (ship-visible? state)
-    (draw-wrapped! ctx (:x ship) (:y ship) game/ship-nose
-                   (fn [x y] (draw-ship! ctx ship t x y))))
+    (let [glow? (pos? (or hyper-glow 0))]
+      (draw-wrapped! ctx (:x ship) (:y ship) game/ship-nose
+                     (fn [x y] (draw-ship! ctx ship t x y glow?)))))
   (draw-hud! ctx state))
 
 ;; --- Input ------------------------------------------------------------------
@@ -358,8 +368,37 @@
     (.addEventListener portrait "change" apply!)
     (apply!)))
 
+(defn- begin-play!
+  "Start the loop and the input listeners. Split out of start-game! because
+   desktop stops at the controls card on the way here."
+  []
+  (show! "controls" false)
+  (when-not @started?
+    (reset! started? true)
+    (init-input!)
+    (when (= :touch @control-mode)
+      (touch/init!))
+    (js/requestAnimationFrame frame!)))
+
+(defn- show-controls!
+  "Desktop has no labels on screen the way the touch strips do, so the keys are
+   spelled out once before the first frame. Any key or click starts the game,
+   which doubles as the gesture the browser wants before allowing audio.
+
+   No preventDefault here: the page cannot scroll anyway, and swallowing every
+   keydown would take Ctrl+R with it."
+  []
+  (letfn [(go [_]
+            (js/window.removeEventListener "keydown" go)
+            (js/window.removeEventListener "pointerdown" go)
+            (sound/init!)
+            (begin-play!))]
+    (js/window.addEventListener "keydown" go)
+    (js/window.addEventListener "pointerdown" go))
+  (show! "controls" true))
+
 (defn- start-game!
-  "Apply the chosen mode and get the loop going. Called either straight away,
+  "Apply the chosen mode and get everything ready. Called either straight away,
    when the mode is already known, or from the chooser."
   [m]
   (reset! control-mode m)
@@ -378,14 +417,10 @@
     (reset! state (cond-> (game/initial-state)
                     ;; The stick aims for you, so touch play runs gentler.
                     (= :touch m) (game/with-thrust control/thrust))))
-  ;; Start the loop and the listeners exactly once; after a hot reload the
-  ;; re-resolution inside frame! picks up the new code.
-  (when-not @started?
-    (reset! started? true)
-    (init-input!)
-    (when (= :touch m)
-      (touch/init!))
-    (js/requestAnimationFrame frame!)))
+  ;; Touch names its controls on the strips themselves; desktop needs telling.
+  (if (= :desktop m)
+    (show-controls!)
+    (begin-play!)))
 
 (defn- choose! [m]
   ;; A tap on these buttons is a real user gesture, which is exactly what the
